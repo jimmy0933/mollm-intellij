@@ -153,6 +153,7 @@ public final class GatewayTest {
             ImageAttachmentTest.run();
             PresentationTest.run();
             PermissionTest.run();
+            SteeringTest.run();
         } finally { server.stop(0); executor.shutdownNow(); }
     }
 

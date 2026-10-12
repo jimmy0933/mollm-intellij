@@ -22,9 +22,14 @@ final class AgentLoop {
     private static final int MAX_OPERATIONS = 64;
     private final Tools tools;
     private final List<Gateway.Message> messages;
+    private final AgentInbox inbox;
 
     AgentLoop(Tools tools, List<Gateway.Message> history) {
+        this(tools, history, new AgentInbox());
+    }
+    AgentLoop(Tools tools, List<Gateway.Message> history, AgentInbox inbox) {
         this.tools = tools; messages = new ArrayList<>(history);
+        this.inbox = inbox;
     }
     List<Gateway.Message> snapshot() { return List.copyOf(messages); }
     static void checkCancelled(Gateway.Call call) {
@@ -42,6 +47,8 @@ final class AgentLoop {
         int operations = 0;
         for (int round = 0; round < MAX_ROUNDS; round++) {
             checkCancelled(cancellation);
+            var guidance = inbox.drain(); messages.addAll(guidance);
+            if (!guidance.isEmpty()) activity.accept("Agent 已讀取 " + guidance.size() + " 則引導訊息，重新規劃中…");
             var requestMessages = new ArrayList<Gateway.Message>();
             requestMessages.add(new Gateway.Message("system", system)); requestMessages.addAll(messages);
             var body = Gateway.request(model, requestMessages, server);
@@ -52,13 +59,22 @@ final class AgentLoop {
             if (reply.tools().isEmpty() && reply.content().isBlank()) throw new IOException("模型未回傳正文或工具呼叫，請換模型或重試。");
             messages.add(new Gateway.Message("assistant", reply.content(), reply.tools(), "", reply.reasoning()));
             if (reply.tools().isEmpty()) {
-                return new Result(snapshot(), true);
+                if (inbox.finishIfEmpty()) return new Result(snapshot(), true);
+                continue;
             }
             int firstResult = messages.size();
             // Placeholders make interrupted or failed runs valid for the next request as well.
             for (var tool : reply.tools()) messages.add(new Gateway.Message("tool", "Cancelled: operation was not executed.", List.of(), tool.id()));
             for (int index = 0; index < reply.tools().size(); index++) {
                 checkCancelled(cancellation);
+                if (inbox.pendingCount() > 0) {
+                    for (int remaining = index; remaining < reply.tools().size(); remaining++) {
+                        var skipped = reply.tools().get(remaining);
+                        messages.set(firstResult + remaining, new Gateway.Message("tool",
+                                "Not executed: new user guidance arrived. Reconsider with updated instructions.", List.of(), skipped.id()));
+                    }
+                    break;
+                }
                 var tool = reply.tools().get(index);
                 String result;
                 if (operations >= MAX_OPERATIONS) result = "Error: agent operation limit reached; operation was not executed.";
@@ -78,6 +94,7 @@ final class AgentLoop {
             if (operations >= MAX_OPERATIONS) break;
         }
         String notice = "已達 Agent 操作上限，工作可能尚未完成。請檢查工具結果，再繼續提出下一步。";
+        messages.addAll(inbox.close());
         messages.add(new Gateway.Message("assistant", notice)); output.accept("text", "\n" + notice);
         return new Result(snapshot(), false);
     }
