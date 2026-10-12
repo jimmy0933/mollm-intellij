@@ -24,6 +24,8 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
         public String chatFontFamily = "__chat_default__";
         public int usageRefreshSeconds = 60;
         public int interfaceScalePercent = 100;
+        public int agentMaxRounds = AgentLimits.DEFAULT_ROUNDS;
+        public int agentMaxOperations = AgentLimits.DEFAULT_OPERATIONS;
         public List<DirectoryGrant> directoryGrants = new ArrayList<>();
     }
 

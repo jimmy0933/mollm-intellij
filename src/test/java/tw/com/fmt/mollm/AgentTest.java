@@ -64,6 +64,7 @@ public final class AgentTest {
             check(!allow.execute("list_files", args("{}"), token).contains(".env"), "Hidden credential files excluded");
             check(allow.execute("read_file", args("{\"path\":\"Main.java\",\"start_line\":2,\"end_line\":2}"), token).contains("2:   String"), "Numbered file slices");
             check(allow.execute("search_text", args("{\"query\":\"old\"}"), token).contains("Main.java:2:"), "Literal source search");
+            check(allow.execute("search_text", args("{\"query\":\"old\",\"path\":\"Main.java\"}"), token).contains("Main.java:2:"), "Search targets a single source file without scanning unrelated paths");
             fails(() -> allow.execute("read_file", args("{\"path\":\"binary.bin\"}"), token), "Binary read accepted");
             var edit = args("{\"path\":\"Main.java\",\"old_text\":\"old\",\"new_text\":\"new\"}");
             check(deny.execute("replace_in_file", edit, token).startsWith("Denied"), "Edit approval denied");
@@ -210,7 +211,7 @@ public final class AgentTest {
             var api = new Gateway("http://127.0.0.1:" + server.getAddress().getPort(), "", 1000);
             for (int count : List.of(1, 4)) {
                 callsPerRound.set(count); requests.set(0); executed.set(0);
-                var engine = new AgentLoop(tools, List.of(new Gateway.Message("user", "Bound the loop")));
+                var engine = new AgentLoop(tools, List.of(new Gateway.Message("user", "Bound the loop")), new AgentInbox(), new AgentLimits(20, 64));
                 try (var token = new Gateway.Call()) {
                     var result = engine.run(api, new Gateway.Model("mock", new JsonObject()), new MollmSettings.Server(), token, (kind, text) -> { }, activity -> { });
                     check(!result.completed(), "Limit is reported as incomplete");
