@@ -36,6 +36,13 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
     private final JButton add = new JButton("新增");
     private final JButton remove = new JButton("刪除");
     private final JButton newChat = new JButton("新對話");
+    private final JButton parallel = new JButton("並行任務");
+    private java.util.function.Predicate<ParallelDraft> parallelLauncher;
+    private AgentInbox activeInbox;
+    private final Font defaultChatFont = transcript.getFont();
+    record ParallelDraft(MollmSettings.Server server, Gateway.Model model, String scope, String text, List<ImageAttachment> images) {
+        ParallelDraft { images = List.copyOf(images); }
+    }
     private final JButton parameters = new JButton("模型參數");
     private final JButton settingsButton = new JButton("設定");
     private final JButton fullScreenButton = new JButton("全螢幕");
@@ -131,6 +138,27 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         fullScreenButton.setEnabled(true);
     }
 
+    void setParallelLauncher(java.util.function.Predicate<ParallelDraft> launcher) { parallelLauncher = launcher; }
+    void startParallel(ParallelDraft draft) {
+        generation++;
+        if (refreshTask != null) refreshTask.cancel(true);
+        loading = false; changing = true;
+        try { chooseServer(draft.server().id); models.removeAllItems(); models.addItem(draft.model()); }
+        finally { changing = false; }
+        mode.setSelectedItem("Agent"); agentDirectory.setText(draft.scope());
+        prompt.setText(draft.text()); draftImages.addAll(draft.images()); controls(); send();
+    }
+
+    private void launchParallel() {
+        if (encodingImage || parallelLauncher == null || selectedServer() == null || selectedModel() == null) return;
+        String text = prompt.getText().trim();
+        if (text.isBlank() && draftImages.isEmpty()) { status.setText("請先輸入另一個任務或附加截圖。"); return; }
+        var draft = new ParallelDraft(selectedServer(), selectedModel(), agentDirectory.getText().trim(), text, draftImages);
+        if (!parallelLauncher.test(draft)) { status.setText("最多開啟 4 個任務分頁，請先關閉已完成的分頁。"); return; }
+        prompt.setText(""); draftImages.clear(); renderImages();
+        if (presentation != null) presentation.restore();
+    }
+
     private void setFullScreen(boolean fullScreen) {
         if (presentation == null || disposed) return;
         try { if (fullScreen) presentation.enter(); else presentation.restore(); }
@@ -158,7 +186,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         transcript.setEditable(false); transcript.setLineWrap(true); transcript.setWrapStyleWord(true);
         prompt.setLineWrap(true); prompt.setWrapStyleWord(true);
         int savedSize = settings.getState().chatFontSize;
-        if (savedSize > 0) setChatFontSize(savedSize);
+        setChatFontSize(savedSize > 0 ? savedSize : defaultChatFont.getSize());
         transcript.setToolTipText("Ctrl＋滑鼠滾輪可放大／縮小對話文字。");
         var panel = new JPanel(new BorderLayout(4, 4));
         panel.add(chatScrollPane(transcript), BorderLayout.CENTER);
@@ -169,7 +197,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         input.add(imageScroll, BorderLayout.NORTH);
         input.add(chatScrollPane(prompt), BorderLayout.CENTER);
         prompt.setToolTipText("Enter 傳送；Shift+Enter 換行；Ctrl＋滾輪調整字體；Ctrl+V 貼上文字或截圖。圖片需使用支援視覺的模型。");
-        var actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        var actions = new JPanel(new GridLayout(0, 3, 4, 4));
         var selection = new JButton("附加選取內容");
         selection.addActionListener(event -> {
             var editor = FileEditorManager.getInstance(project).getSelectedTextEditor();
@@ -183,7 +211,8 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         var paste = new JButton("貼上");
         paste.setToolTipText("從系統剪貼簿貼上文字或截圖（Ctrl+V）");
         paste.addActionListener(event -> prompt.paste());
-        actions.add(send); actions.add(stop); actions.add(newChat); actions.add(paste); actions.add(selection);
+        parallel.addActionListener(event -> launchParallel());
+        actions.add(send); actions.add(stop); actions.add(newChat); actions.add(parallel); actions.add(paste); actions.add(selection);
         input.add(actions, BorderLayout.SOUTH); panel.add(input, BorderLayout.SOUTH);
         return panel;
     }
@@ -203,8 +232,9 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
 
     private void setChatFontSize(int size) {
         float bounded = Math.max(10, Math.min(40, size));
-        interfaceScale.setFont(transcript, transcript.getFont().deriveFont(bounded));
-        interfaceScale.setFont(prompt, prompt.getFont().deriveFont(bounded));
+        var font = ChatFonts.create(settings.getState().chatFontFamily, defaultChatFont, bounded);
+        interfaceScale.setFont(transcript, font);
+        interfaceScale.setFont(prompt, font);
     }
 
     private JPanel settingsPanel() {
@@ -229,7 +259,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
     }
 
     private void pasteImage(Image image) {
-        if (busy || encodingImage) { status.setText("請等目前傳送或圖片處理完成，再貼上截圖。"); return; }
+        if (encodingImage) { status.setText("請等圖片處理完成，再貼上截圖。"); return; }
         if (draftImages.size() >= ImageAttachment.MAX_COUNT) { status.setText("每次最多附加 4 張截圖。"); return; }
         encodingImage = true; controls(); status.setText("處理截圖…");
         workers.submit(() -> {
@@ -256,7 +286,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
             var card = new JPanel(new BorderLayout(2, 2));
             card.add(new JLabel(image.preview()), BorderLayout.CENTER);
             var removeImage = new JButton("移除 " + image.width() + "×" + image.height());
-            removeImage.setEnabled(!busy && !encodingImage);
+            removeImage.setEnabled(!encodingImage);
             removeImage.addActionListener(event -> { draftImages.remove(image); renderImages(); });
             card.add(removeImage, BorderLayout.SOUTH);
             card.setMaximumSize(card.getPreferredSize()); imagePreviews.add(card);
@@ -269,13 +299,16 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
 
     private JPanel helpPanel() {
         var panel = new JPanel(new BorderLayout(8, 8));
-        var text = new JTextArea("MoLLM IntelliJ 0.5.0\n\n"
+        var text = new JTextArea("MoLLM IntelliJ 0.6.0\n\n"
                 + "1. 新增 Base URL 與 API Key。\n2. 重新整理後選擇模型。\n3. Enter 傳送，Shift+Enter 換行；Ctrl+Enter 亦可傳送。\n"
                 + "4. 「附加選取內容」把程式碼加入草稿，傳送前可自行檢查。\n\n"
                 + "在對話或輸入框上 Ctrl＋滾輪調整文字大小（10–40），並記住大小。\n\n"
                 + "上方「全螢幕」放大 MoLLM；「一般大小」或 Esc 可回到原本工具視窗，對話與 Agent 持續保留。\n"
                 + "設定頁可調整 MoLLM 介面縮放 75%–200%，不改動 IDE 的全域縮放設定。\n\n"
                 + "金鑰存入 IntelliJ Password Safe；對話只保留在目前視窗記憶體。\n"
+                + "Agent 執行中仍可輸入，按 Enter／引導 Agent 追加指示；目前操作完成後會讀取並重新規劃。\n"
+                + "「並行任務」以草稿開啟獨立 Agent 分頁，最多 4 個；停止或關閉分頁只影響該任務。\n"
+                + "設定可選系統內已安裝的對話字體，保留字體大小與介面縮放設定。\n"
                 + "用量更新頻率可設定為 30 秒、1 分鐘或 3 分鐘，預設 1 分鐘；管理路由無權限時仍可對話。\n"
                 + "切換 Agent 後可搜尋與讀取專案、修改／新增檔案、執行指令與測試。\n"
                 + "讀取與搜尋自動執行；每次修改會開啟 diff 確認，指令則顯示完整內容供你允許或拒絕。\n"
@@ -323,6 +356,14 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
             } catch (Exception e) { status.setText("無法開啟權限設定，請檢查 Agent 工作目錄。"); }
         });
         options.add(new JLabel("Agent 工具權限")); options.add(permissions);
+        var fonts = new JComboBox<String>(); fonts.addItem("IDE 預設");
+        for (var family : ChatFonts.families()) fonts.addItem(family);
+        fonts.setSelectedItem(ChatFonts.available(settings.getState().chatFontFamily) ? settings.getState().chatFontFamily : "IDE 預設");
+        fonts.addActionListener(event -> {
+            String selected = (String) fonts.getSelectedItem(); settings.getState().chatFontFamily = selected.equals("IDE 預設") ? "" : selected;
+            setChatFontSize(settings.getState().chatFontSize > 0 ? settings.getState().chatFontSize : defaultChatFont.getSize());
+        });
+        options.add(new JLabel("對話與輸入框字體")); options.add(fonts);
         panel.add(options, BorderLayout.SOUTH);
         return panel;
     }
@@ -488,6 +529,10 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
     }
 
     private void send() {
+        if (busy && activeInbox != null) { steer(); return; }
+        if (draftImages.size() > ImageAttachment.MAX_COUNT || draftImages.stream().mapToLong(ImageAttachment::bytes).sum() > ImageAttachment.MAX_TOTAL_BYTES) {
+            status.setText("還原的草稿附件超過限制，請移除部分圖片後再傳送（最多 4 張／20 MiB）。"); return;
+        }
         var server = selectedServer(); var model = selectedModel();
         String draft = prompt.getText().trim();
         if (busy || loading || encodingImage || server == null || model == null || draft.isBlank() && draftImages.isEmpty()) return;
@@ -510,6 +555,8 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 status.setText("模型未聲明工具支援；請換模型，或在模型參數勾選強制嘗試工具呼叫。"); return;
             }
         }
+        activeInbox = agent ? new AgentInbox() : null;
+        var inbox = activeInbox;
         busy = true; controls(); prompt.setText("");
         draftImages.clear(); renderImages();
         transcript.append("\n你：\n" + text + (images.isEmpty() ? "" : "\n[附加 " + images.size() + " 張截圖]") + "\n\nMoLLM（" + model.id() + "）：\n");
@@ -546,13 +593,13 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 if (agent) {
                     var root = WorkspaceTools.selectRoot(java.nio.file.Path.of(projectPath), scope);
                     var tools = new WorkspaceTools(root, new IdeWorkspace(project), new AgentApproval(project, root));
-                    engine = new AgentLoop(tools, requestHistory);
+                    engine = new AgentLoop(tools, requestHistory, inbox);
                     var safeApi = api;
                     var result = engine.run(api, model, server, call, receive, activity -> ui(() -> {
                         if (activeCall != call || call.cancelled()) return;
                         String visible = safeApi.redact(activity);
                         status.setText(visible.lines().findFirst().orElse("Agent 工作中…"));
-                        if (activity.startsWith("工具 ")) {
+                        if (activity.startsWith("工具 ") || activity.startsWith("Agent 已讀取")) {
                             transcript.append("\n\n[" + visible + "]\n");
                             transcript.setCaretPosition(transcript.getDocument().getLength());
                         }
@@ -575,6 +622,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                     status.setText(completed ? (agent ? "Agent 完成。請檢查檔案變更與測試結果。" : "回覆完成。") : "Agent 達到操作上限，可繼續提出下一步。"); finish(call);
                 });
             } catch (Exception e) {
+                var unconsumed = inbox == null ? List.<Gateway.Message>of() : inbox.close();
                 String detail = api == null ? "金鑰無法讀取。" : api.redact(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
                 List<Gateway.Message> checkpoint = engine == null ? List.of() : engine.snapshot();
                 ui(() -> {
@@ -583,6 +631,13 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                     if (checkpoint.isEmpty()) {
                         draftImages.addAll(images); renderImages();
                         if (prompt.getText().isBlank()) prompt.setText(draft);
+                    }
+                    if (!unconsumed.isEmpty()) {
+                        for (var pending : unconsumed) {
+                            prompt.append((prompt.getText().isBlank() ? "" : "\n\n") + pending.content());
+                            draftImages.addAll(pending.images());
+                        }
+                        transcript.append("\n[尚未讀取的引導訊息已還原到草稿]\n"); renderImages();
                     }
                     if (call.cancelled()) {
                         transcript.append(agent ? "\n\n[Agent 已停止；已套用的修改仍保留，待執行操作已取消]\n" : "\n\n[已停止；此回覆未加入歷史]\n");
@@ -597,9 +652,26 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         });
     }
 
+    private void steer() {
+        if (encodingImage || activeInbox == null || activeCall == null || activeCall.cancelled()) return;
+        String text = prompt.getText().trim();
+        if (text.isBlank() && draftImages.isEmpty()) return;
+        var model = selectedModel(); var server = selectedServer();
+        var override = server.overrides.get(model.id());
+        if (!draftImages.isEmpty() && "false".equals(Gateway.string(model.info(), "supports_vision", "unknown"))
+                && (override == null || !override.forceImageInput)) { status.setText("此模型不支援圖片引導，請改用文字。"); return; }
+        var message = new Gateway.Message("user", text.isBlank() ? "請參考附加截圖調整任務。" : text, draftImages);
+        try {
+            if (!activeInbox.submit(message)) { status.setText("Agent 已結束，請稍後再傳送；草稿已保留。"); return; }
+            prompt.setText(""); draftImages.clear(); renderImages();
+            transcript.append("\n\n[你的引導訊息，待 Agent 讀取]\n" + message.content() + "\n");
+            status.setText("引導訊息已排入，Agent 會在目前操作完成後重新規劃。");
+        } catch (IllegalStateException e) { status.setText(e.getMessage()); }
+    }
+
     private void finish(Gateway.Call call) {
         if (activeCall != call) return;
-        activeCall = null; busy = false; controls();
+        activeCall = null; activeInbox = null; busy = false; controls();
         UsageWidgetFactory.nudge();
     }
     private void cancel() {
@@ -614,7 +686,10 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         remove.setEnabled(idle && selectedServer() != null); refresh.setEnabled(idle && selectedServer() != null);
         parameterModel.setText(selectedModel() == null ? "尚未選擇" : selectedModel().id());
         parameters.setEnabled(idle && selectedModel() != null); newChat.setEnabled(!busy && !encodingImage);
-        send.setEnabled(idle && !encodingImage && selectedModel() != null); stop.setEnabled(busy);
+        send.setText(busy && activeInbox != null ? "引導 Agent" : "傳送");
+        send.setEnabled((idle || busy && activeInbox != null) && !encodingImage && selectedModel() != null
+                && (activeCall == null || !activeCall.cancelled())); stop.setEnabled(busy);
+        parallel.setEnabled(!loading && !encodingImage && selectedModel() != null && parallelLauncher != null);
         mode.setEnabled(idle); agentDirectory.setEnabled(idle && "Agent".equals(mode.getSelectedItem()));
         if (activeCall != null && activeCall.cancelled()) stop.setEnabled(false);
         renderImages();

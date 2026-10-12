@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>tw.com.fmt.mollm</id>
     <name>MoLLM</name>
-    <version>0.5.0</version>
+    <version>0.6.0</version>
     <vendor>MoLLM IntelliJ port</vendor>
     <description><![CDATA[
       MoLLM chat, coding agent and LiteLLM usage dashboard. Read and search workspace files,
@@ -13,7 +13,7 @@
     <idea-version since-build="252.28539.97"/>
     <depends>com.intellij.modules.platform</depends>
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="MoLLM" anchor="right" factoryClass="tw.com.fmt.mollm.MollmToolWindowFactory" icon="/icons/mollm.svg"/>
+        <toolWindow id="MoLLM" anchor="right" canCloseContents="true" factoryClass="tw.com.fmt.mollm.MollmToolWindowFactory" icon="/icons/mollm.svg"/>
         <statusBarWidgetFactory id="MoLLM.Usage" implementation="tw.com.fmt.mollm.UsageWidgetFactory"/>
     </extensions>
 </idea-plugin>
