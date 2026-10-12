@@ -1,0 +1,38 @@
+plugins { id 'java' }
+
+group = 'tw.com.fmt.mollm'
+version = '0.5.0'
+
+def ideaHome = providers.gradleProperty('ideaHome').orElse(providers.environmentVariable('IDEA_HOME'))
+if (!ideaHome.isPresent()) {
+    throw new GradleException('Set IDEA_HOME or use -PideaHome=<IntelliJ installation directory>')
+}
+def minimumBuild = (file('src/main/resources/META-INF/plugin.xml').text =~ /since-build="([^"]+)"/)[0][1]
+def sdkBuild = file("${ideaHome.get()}/build.txt").text.trim().replaceFirst(/^[A-Z]+-/, '')
+if (sdkBuild.tokenize('.')[0] != minimumBuild.tokenize('.')[0]) {
+    throw new GradleException("Use an IntelliJ ${minimumBuild.tokenize('.')[0]} SDK for this baseline; selected SDK is ${sdkBuild}")
+}
+dependencies {
+    compileOnly fileTree(dir: "${ideaHome.get()}/lib", include: '*.jar')
+    testImplementation fileTree(dir: "${ideaHome.get()}/lib", include: '*.jar')
+}
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+tasks.named('jar') { from('LICENSE.txt') }
+tasks.register('gatewayTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'tw.com.fmt.mollm.GatewayTest'
+    jvmArgs '--add-modules', 'jdk.httpserver', '-Djava.awt.headless=true'
+}
+tasks.named('check') { dependsOn 'gatewayTest' }
+// The integration harness is a standalone Java program, not a JUnit test class.
+tasks.named('test') { enabled = false }
+tasks.register('buildPlugin', Zip) {
+    dependsOn jar, check
+    archiveFileName = "mollm-intellij-${version}.zip"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    into('mollm-intellij/lib') { from tasks.jar }
+}

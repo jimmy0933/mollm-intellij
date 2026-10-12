@@ -1,0 +1,19 @@
+<idea-plugin>
+    <id>tw.com.fmt.mollm</id>
+    <name>MoLLM</name>
+    <version>0.5.0</version>
+    <vendor>MoLLM IntelliJ port</vendor>
+    <description><![CDATA[
+      MoLLM chat, coding agent and LiteLLM usage dashboard. Read and search workspace files,
+      review edits in a diff, approve commands and run tests with streaming tool calling.
+      Multiple OpenAI-compatible gateways, model metadata and secure API key storage.
+      Dedicated settings page and clipboard screenshot attachments for vision models in Chat and Agent.
+      Adapted from MoLLM VS Code 0.3.11 (MIT, yhho).
+    ]]></description>
+    <idea-version since-build="252.28539.97"/>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="MoLLM" anchor="right" factoryClass="tw.com.fmt.mollm.MollmToolWindowFactory" icon="/icons/mollm.svg"/>
+        <statusBarWidgetFactory id="MoLLM.Usage" implementation="tw.com.fmt.mollm.UsageWidgetFactory"/>
+    </extensions>
+</idea-plugin>
