@@ -154,6 +154,7 @@ public final class GatewayTest {
             PresentationTest.run();
             PermissionTest.run();
             SteeringTest.run();
+            AttachmentUiTest.run();
         } finally { server.stop(0); executor.shutdownNow(); }
     }
 

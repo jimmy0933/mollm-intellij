@@ -21,7 +21,7 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
         public int timeoutMs = 120_000;
         public String reasoningDisplay = "quoted";
         public int chatFontSize;
-        public String chatFontFamily = "";
+        public String chatFontFamily = "__chat_default__";
         public int usageRefreshSeconds = 60;
         public int interfaceScalePercent = 100;
         public List<DirectoryGrant> directoryGrants = new ArrayList<>();

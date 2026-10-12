@@ -1,7 +1,6 @@
 package tw.com.fmt.mollm;
 
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.google.gson.JsonObject;
@@ -27,6 +26,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
     private final JComboBox<Gateway.Model> models = new JComboBox<>();
     private final JTextArea transcript = new JTextArea();
     private final ChatInput prompt = new ChatInput(this::pasteImage, this::pasteStatus);
+    private final JTextArea fontSample = new JTextArea("", 3, 20);
     private final JLabel status = new JLabel("新增伺服器後即可開始。");
     private final UsagePanel usage = new UsagePanel();
     private final JButton send = new JButton("傳送");
@@ -185,6 +185,26 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
     private JPanel chatPanel() {
         transcript.setEditable(false); transcript.setLineWrap(true); transcript.setWrapStyleWord(true);
         prompt.setLineWrap(true); prompt.setWrapStyleWord(true);
+        prompt.setFilesReceiver(this::dropFiles);
+        var transcriptTextHandler = transcript.getTransferHandler();
+        transcript.setTransferHandler(new TransferHandler() {
+            @Override public void exportToClipboard(JComponent component, java.awt.datatransfer.Clipboard clipboard, int action) {
+                if (transcriptTextHandler != null) transcriptTextHandler.exportToClipboard(component, clipboard, action);
+            }
+            @Override public int getSourceActions(JComponent component) {
+                return transcriptTextHandler == null ? NONE : transcriptTextHandler.getSourceActions(component);
+            }
+            @Override public boolean canImport(TransferSupport support) {
+                return prompt.getTransferHandler().canImport(new TransferSupport(prompt, support.getTransferable()));
+            }
+            @Override public boolean importData(TransferSupport support) {
+                if (support.isDrop()) {
+                    if ((support.getSourceDropActions() & COPY) == 0) return false;
+                    support.setDropAction(COPY);
+                }
+                return prompt.getTransferHandler().importData(prompt, support.getTransferable());
+            }
+        });
         int savedSize = settings.getState().chatFontSize;
         setChatFontSize(savedSize > 0 ? savedSize : defaultChatFont.getSize());
         transcript.setToolTipText("Ctrl＋滑鼠滾輪可放大／縮小對話文字。");
@@ -196,23 +216,9 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         imageScroll.setVisible(false);
         input.add(imageScroll, BorderLayout.NORTH);
         input.add(chatScrollPane(prompt), BorderLayout.CENTER);
-        prompt.setToolTipText("Enter 傳送；Shift+Enter 換行；Ctrl＋滾輪調整字體；Ctrl+V 貼上文字或截圖。圖片需使用支援視覺的模型。");
-        var actions = new JPanel(new GridLayout(0, 3, 4, 4));
-        var selection = new JButton("附加選取內容");
-        selection.addActionListener(event -> {
-            var editor = FileEditorManager.getInstance(project).getSelectedTextEditor();
-            if (editor == null || !editor.getSelectionModel().hasSelection()) {
-                status.setText("請先在編輯器選取要附加的內容。"); return;
-            }
-            var file = FileEditorManager.getInstance(project).getSelectedFiles();
-            String name = file.length > 0 ? file[0].getName() : "selection";
-            prompt.append("\n\n檔案：" + name + "\n```\n" + editor.getSelectionModel().getSelectedText() + "\n```\n");
-        });
-        var paste = new JButton("貼上");
-        paste.setToolTipText("從系統剪貼簿貼上文字或截圖（Ctrl+V）");
-        paste.addActionListener(event -> prompt.paste());
+        prompt.setToolTipText("拖入圖片／文字檔案或程式碼；Enter 傳送，Shift+Enter 換行；Ctrl+V 仍可貼上截圖。");
         parallel.addActionListener(event -> launchParallel());
-        actions.add(send); actions.add(stop); actions.add(newChat); actions.add(parallel); actions.add(paste); actions.add(selection);
+        var actions = new CompactActions(send, stop, newChat, parallel);
         input.add(actions, BorderLayout.SOUTH); panel.add(input, BorderLayout.SOUTH);
         return panel;
     }
@@ -235,6 +241,8 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         var font = ChatFonts.create(settings.getState().chatFontFamily, defaultChatFont, bounded);
         interfaceScale.setFont(transcript, font);
         interfaceScale.setFont(prompt, font);
+        interfaceScale.setFont(fontSample, font);
+        fontSample.setText("實際字體：" + font.getFamily() + "\n你好，這是一段對話文字範例。\nThe quick brown fox · 0123456789");
     }
 
     private JPanel settingsPanel() {
@@ -280,6 +288,33 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
 
     private void pasteStatus(String message) { status.setText(message); }
 
+    private void dropFiles(List<java.io.File> files) {
+        if (encodingImage) { status.setText("請等目前附件處理完成。"); return; }
+        if (files.size() > 8) { status.setText("一次最多拖入 8 個檔案。"); return; }
+        encodingImage = true; controls(); status.setText("讀取拖入的附件…");
+        workers.submit(() -> {
+            var attachments = new ArrayList<DroppedFile>(); var errors = new ArrayList<String>();
+            for (var file : files) {
+                try { attachments.add(DroppedFile.read(file.toPath())); }
+                catch (Exception e) { errors.add(file.getName() + "：" + e.getMessage()); }
+            }
+            ui(() -> {
+                encodingImage = false; int accepted = 0;
+                for (var attachment : attachments) {
+                    if (attachment.image() == null) { prompt.append(attachment.draftText()); accepted++; }
+                    else {
+                        long bytes = draftImages.stream().mapToLong(ImageAttachment::bytes).sum();
+                        if (draftImages.size() >= ImageAttachment.MAX_COUNT || bytes + attachment.image().bytes() > ImageAttachment.MAX_TOTAL_BYTES)
+                            errors.add(attachment.name() + "：圖片附件超過 4 張／20 MiB。");
+                        else { draftImages.add(attachment.image()); accepted++; }
+                    }
+                }
+                renderImages(); controls();
+                status.setText("已附加 " + accepted + " 個檔案。" + String.join("；", errors));
+            });
+        });
+    }
+
     private void renderImages() {
         imagePreviews.removeAll();
         for (var image : draftImages) {
@@ -299,9 +334,9 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
 
     private JPanel helpPanel() {
         var panel = new JPanel(new BorderLayout(8, 8));
-        var text = new JTextArea("MoLLM IntelliJ 0.6.0\n\n"
+        var text = new JTextArea("MoLLM IntelliJ 0.6.1\n\n"
                 + "1. 新增 Base URL 與 API Key。\n2. 重新整理後選擇模型。\n3. Enter 傳送，Shift+Enter 換行；Ctrl+Enter 亦可傳送。\n"
-                + "4. 「附加選取內容」把程式碼加入草稿，傳送前可自行檢查。\n\n"
+                + "4. 將圖片或文字檔案拖入對話區／輸入框附加；程式碼選取內容也可拖入草稿。\n\n"
                 + "在對話或輸入框上 Ctrl＋滾輪調整文字大小（10–40），並記住大小。\n\n"
                 + "上方「全螢幕」放大 MoLLM；「一般大小」或 Esc 可回到原本工具視窗，對話與 Agent 持續保留。\n"
                 + "設定頁可調整 MoLLM 介面縮放 75%–200%，不改動 IDE 的全域縮放設定。\n\n"
@@ -356,15 +391,21 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
             } catch (Exception e) { status.setText("無法開啟權限設定，請檢查 Agent 工作目錄。"); }
         });
         options.add(new JLabel("Agent 工具權限")); options.add(permissions);
-        var fonts = new JComboBox<String>(); fonts.addItem("IDE 預設");
+        String chatDefault = "聊天預設（" + ChatFonts.defaultFamily() + "）";
+        var fonts = new JComboBox<String>(); fonts.addItem(chatDefault); fonts.addItem("IDE 預設");
         for (var family : ChatFonts.families()) fonts.addItem(family);
-        fonts.setSelectedItem(ChatFonts.available(settings.getState().chatFontFamily) ? settings.getState().chatFontFamily : "IDE 預設");
+        fonts.setSelectedItem("__chat_default__".equals(settings.getState().chatFontFamily) ? chatDefault
+                : ChatFonts.available(settings.getState().chatFontFamily) ? settings.getState().chatFontFamily : "IDE 預設");
         fonts.addActionListener(event -> {
-            String selected = (String) fonts.getSelectedItem(); settings.getState().chatFontFamily = selected.equals("IDE 預設") ? "" : selected;
+            String selected = (String) fonts.getSelectedItem(); settings.getState().chatFontFamily = selected.equals(chatDefault) ? "__chat_default__" : selected.equals("IDE 預設") ? "" : selected;
             setChatFontSize(settings.getState().chatFontSize > 0 ? settings.getState().chatFontSize : defaultChatFont.getSize());
         });
         options.add(new JLabel("對話與輸入框字體")); options.add(fonts);
-        panel.add(options, BorderLayout.SOUTH);
+        fontSample.setEditable(false); fontSample.setLineWrap(true); fontSample.setWrapStyleWord(true);
+        var footer = new JPanel(new BorderLayout(0, 6)); footer.add(options, BorderLayout.NORTH);
+        var preview = new JPanel(new BorderLayout(0, 4)); preview.add(new JLabel("即時字體預覽"), BorderLayout.NORTH);
+        preview.add(new JScrollPane(fontSample), BorderLayout.CENTER); footer.add(preview, BorderLayout.CENTER);
+        panel.add(footer, BorderLayout.SOUTH);
         return panel;
     }
 
