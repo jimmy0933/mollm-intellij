@@ -21,6 +21,10 @@ final class AgentLimitsTest {
         check(AgentLimits.from(restored).equals(new AgentLimits(120, 600)), "Both limits persist across IDE restart");
         restored.agentMaxRounds = -1; restored.agentMaxOperations = Integer.MAX_VALUE;
         check(AgentLimits.from(restored).equals(AgentLimits.defaults()), "Invalid stored limits retain finite safe bounds");
+        settings.agentUnlimited = true;
+        restored = com.intellij.util.xmlb.XmlSerializer.deserialize(com.intellij.util.xmlb.XmlSerializer.serialize(settings), MollmSettings.Data.class);
+        check(AgentLimits.from(restored).unlimited(), "Unlimited option persists across IDE restart");
+        check(!AgentLimits.from(restored).roundsReached(Long.MAX_VALUE) && !AgentLimits.from(restored).operationsReached(Long.MAX_VALUE), "Unlimited bypasses both caps without numeric sentinel");
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         var requests = new AtomicInteger(); var executed = new AtomicInteger(); var mode = new AtomicInteger();
         var failure = new AtomicReference<Throwable>();
@@ -34,10 +38,10 @@ final class AgentLimitsTest {
                     check(historyResults == 20, "Continuation sends prior tool results instead of restarting discovery");
                 }
                 String delta;
-                if (mode.get() == 0 && count > 21) delta = "{\"content\":\"review completed\"}";
+                if ((mode.get() == 0 && count > 21) || (mode.get() == 2 && count > 81)) delta = "{\"content\":\"review completed\"}";
                 else {
                     var calls = new com.google.gson.JsonArray();
-                    for (int i = 0; i < (mode.get() == 1 ? 2 : 1); i++) {
+                    for (int i = 0; i < (mode.get() == 2 ? 4 : mode.get() == 1 ? 2 : 1); i++) {
                         var call = new JsonObject(); call.addProperty("index", i); call.addProperty("id", "call_" + count + "_" + i);
                         var fn = new JsonObject(); fn.addProperty("name", "list_files"); fn.addProperty("arguments", "{}"); call.add("function", fn); calls.add(call);
                     }
@@ -74,6 +78,27 @@ final class AgentLimitsTest {
                 check(result.messages().getLast().content().contains("工具操作上限") && result.messages().getLast().content().contains("3/10"), "Operation-limit notice reports accurate model count");
                 check(result.messages().stream().filter(value -> value.role().equals("tool")).count() == 6,
                         "Unexecuted tool calls still have paired results for continuation");
+            }
+            mode.set(2); requests.set(0); executed.set(0);
+            try (var call = new Gateway.Call()) {
+                var activity = new ArrayList<String>();
+                var result = new AgentLoop(tools, List.of(new Gateway.Message("user", "unlimited review")), new AgentInbox(), new AgentLimits(80, 256, true))
+                        .run(api, new Gateway.Model("mock", new JsonObject()), new MollmSettings.Server(), call, (kind, text) -> {}, activity::add);
+                check(result.completed() && requests.get() == 82 && executed.get() == 324, "Unlimited completes beyond both default caps");
+                check(activity.stream().anyMatch(value -> value.contains("82/不設限")) && activity.stream().anyMatch(value -> value.contains("324/不設限")), "Unlimited reports real progress without misleading finite cap");
+            }
+            requests.set(0); executed.set(0);
+            var cancellingTools = new AgentLoop.Tools() {
+                public String context() { return "cancel test"; }
+                public String execute(String name, JsonObject args, Gateway.Call cancellation) { executed.incrementAndGet(); cancellation.cancel(); return "stopped"; }
+            };
+            try (var call = new Gateway.Call()) {
+                boolean cancelled = false;
+                try {
+                    new AgentLoop(cancellingTools, List.of(new Gateway.Message("user", "cancel unlimited")), new AgentInbox(), new AgentLimits(80, 256, true))
+                            .run(api, new Gateway.Model("mock", new JsonObject()), new MollmSettings.Server(), call, (kind, text) -> {}, activity -> {});
+                } catch (java.util.concurrent.CancellationException expected) { cancelled = true; }
+                check(cancelled && executed.get() == 1 && requests.get() == 1, "Unlimited still stops within an active tool batch");
             }
             if (failure.get() != null) throw new AssertionError(failure.get());
         } finally { server.stop(0); }

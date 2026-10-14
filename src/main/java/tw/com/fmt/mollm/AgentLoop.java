@@ -51,9 +51,9 @@ final class AgentLoop {
                 + "search_text accepts a file or directory path. Hidden/sensitive directories are excluded. "
                 + "On continuation, use the existing tool results and review progress rather than restarting discovery. "
                 + "Finish with a concise summary of edits and actual test results.\n" + tools.context();
-        int operations = 0;
-        int rounds = 0;
-        for (int round = 0; round < limits.rounds(); round++) {
+        long operations = 0;
+        long rounds = 0;
+        while (!limits.roundsReached(rounds)) {
             checkCancelled(cancellation);
             var guidance = inbox.drain(); messages.addAll(guidance);
             if (!guidance.isEmpty()) activity.accept("Agent 已讀取 " + guidance.size() + " 則引導訊息，重新規劃中…");
@@ -62,7 +62,7 @@ final class AgentLoop {
             var body = Gateway.request(model, requestMessages, server);
             body.add("tools", definitions()); body.addProperty("tool_choice", "auto");
             rounds++;
-            activity.accept("Agent 思考中（" + rounds + "/" + limits.rounds() + "）…");
+            activity.accept("Agent 思考中（" + limits.roundProgress(rounds) + "）…");
             var reply = api.stream(body, cancellation, output);
             checkCancelled(cancellation);
             if (reply.tools().isEmpty() && reply.content().isBlank()) throw new IOException("模型未回傳正文或工具呼叫，請換模型或重試。");
@@ -86,10 +86,10 @@ final class AgentLoop {
                 }
                 var tool = reply.tools().get(index);
                 String result;
-                if (operations >= limits.operations()) result = "Error: agent operation limit reached; operation was not executed.";
+                if (limits.operationsReached(operations)) result = "Error: agent operation limit reached; operation was not executed.";
                 else {
                     operations++;
-                    activity.accept("工具 " + tool.name() + "（" + operations + "/" + limits.operations() + "）");
+                    activity.accept("工具 " + tool.name() + "（" + limits.operationProgress(operations) + "）");
                     try {
                         var args = JsonParser.parseString(tool.arguments()).getAsJsonObject();
                         result = tools.execute(tool.name(), args, cancellation);
@@ -100,9 +100,9 @@ final class AgentLoop {
                 messages.set(firstResult + index, new Gateway.Message("tool", result, List.of(), tool.id()));
                 activity.accept("工具 " + tool.name() + " 結果：\n" + result);
             }
-            if (operations >= limits.operations()) break;
+            if (limits.operationsReached(operations)) break;
         }
-        String reason = operations >= limits.operations() ? "工具操作上限" : "模型回合上限";
+        String reason = limits.operationsReached(operations) ? "工具操作上限" : "模型回合上限";
         String notice = "已達 Agent " + reason + "。本段已使用 " + rounds + "/" + limits.rounds() + " 個模型回合、"
                 + operations + "/" + limits.operations() + " 次工具操作。工作尚未確認完成；可按「繼續 Agent」接續目前進度，或在設定調整上限。";
         messages.addAll(inbox.close());

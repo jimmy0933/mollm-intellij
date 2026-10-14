@@ -26,6 +26,7 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
         public int interfaceScalePercent = 100;
         public int agentMaxRounds = AgentLimits.DEFAULT_ROUNDS;
         public int agentMaxOperations = AgentLimits.DEFAULT_OPERATIONS;
+        public boolean agentUnlimited = false;
         public List<DirectoryGrant> directoryGrants = new ArrayList<>();
     }
 
