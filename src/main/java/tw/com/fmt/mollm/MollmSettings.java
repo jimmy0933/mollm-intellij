@@ -21,9 +21,12 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
         public int timeoutMs = 120_000;
         public String reasoningDisplay = "quoted";
         public int chatFontSize;
-        public String chatFontFamily = "";
+        public String chatFontFamily = "__chat_default__";
         public int usageRefreshSeconds = 60;
         public int interfaceScalePercent = 100;
+        public int agentMaxRounds = AgentLimits.DEFAULT_ROUNDS;
+        public int agentMaxOperations = AgentLimits.DEFAULT_OPERATIONS;
+        public boolean agentUnlimited = false;
         public List<DirectoryGrant> directoryGrants = new ArrayList<>();
     }
 

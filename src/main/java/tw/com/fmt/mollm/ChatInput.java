@@ -33,6 +33,10 @@ final class ChatInput extends JTextArea implements UiDataProvider {
         this(receive, failure, ChatInput::systemClipboard);
     }
 
+    void setFilesReceiver(Consumer<java.util.List<java.io.File>> receive) {
+        ((ImagePasteHandler) getTransferHandler()).setFilesReceiver(receive);
+    }
+
     ChatInput(Consumer<Image> receive, Consumer<String> failure, Supplier<Transferable> clipboard) {
         super(5, 30);
         this.clipboard = clipboard; this.failure = failure;
