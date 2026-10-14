@@ -14,6 +14,9 @@ final class FileDiscovery {
     private FileDiscovery() { }
 
     static Scan scan(Path start, boolean recursive, Predicate<Entry> filter, Gateway.Call call) throws IOException {
+        return scan(start, recursive, filter, path -> true, call);
+    }
+    static Scan scan(Path start, boolean recursive, Predicate<Entry> filter, Predicate<Path> allowed, Gateway.Call call) throws IOException {
         AgentLoop.checkCancelled(call);
         if (!Files.isDirectory(start)) throw new IOException("NOT_DIRECTORY: 請指定資料夾：" + start);
         var entries = new ArrayList<Entry>();
@@ -22,6 +25,9 @@ final class FileDiscovery {
             private FileVisitResult accept(Path path, BasicFileAttributes attrs) {
                 AgentLoop.checkCancelled(call);
                 if (++visited[0] > MAX_VISITED) { complete[0] = false; return FileVisitResult.TERMINATE; }
+                try {
+                    if (!allowed.test(path) || !allowed.test(path.toRealPath())) { skipped[0]++; complete[0] = false; return attrs.isDirectory() ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE; }
+                } catch (IOException e) { skipped[0]++; complete[0] = false; return FileVisitResult.CONTINUE; }
                 var entry = new Entry(path, attrs.isDirectory());
                 if (filter.test(entry)) {
                     if (entries.size() >= MAX_RESULTS) { complete[0] = false; return FileVisitResult.TERMINATE; }

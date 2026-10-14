@@ -36,13 +36,18 @@ final class WorkspaceTools implements AgentLoop.Tools {
     private final Path root;
     private final FilesAccess files;
     private final Approval approval;
+    private final SensitiveFiles sensitive;
     private final Set<String> deniedChanges = new java.util.HashSet<>();
     private record CommandIdentity(List<String> argv, Path directory) { }
     private final Set<CommandIdentity> deniedCommands = new java.util.HashSet<>();
     private final Set<Path> createdReports = new java.util.LinkedHashSet<>();
 
     WorkspaceTools(Path root, FilesAccess files, Approval approval) throws IOException {
+        this(root, files, approval, SensitiveFiles.disabled());
+    }
+    WorkspaceTools(Path root, FilesAccess files, Approval approval, SensitiveFiles sensitive) throws IOException {
         this.root = root.toRealPath(); this.files = files; this.approval = approval;
+        this.sensitive = sensitive;
         if (!Files.isDirectory(this.root)) throw new IOException("工作目錄不是資料夾");
     }
 
@@ -74,7 +79,8 @@ final class WorkspaceTools implements AgentLoop.Tools {
         Path path;
         try { path = root.resolve(Path.of(value)).normalize(); }
         catch (java.nio.file.InvalidPathException e) { throw new IOException("INVALID_PATH: 路徑格式無效。", e); }
-        try { return path.toRealPath(); }
+        sensitive.checkPath(path);
+        try { Path real = path.toRealPath(); sensitive.checkPath(real); return real; }
         catch (java.nio.file.NoSuchFileException e) { throw new IOException("NOT_FOUND: 路徑不存在：" + path, e); }
         catch (java.nio.file.AccessDeniedException e) { throw new IOException("ACCESS_DENIED: 無權限存取：" + path, e); }
     }
@@ -86,6 +92,7 @@ final class WorkspaceTools implements AgentLoop.Tools {
     }
 
     private String read(Path path) throws Exception {
+        sensitive.checkPath(path); sensitive.checkPath(path.toRealPath());
         if (Files.isDirectory(path)) throw new IOException("IS_DIRECTORY: 路徑是資料夾，請用 list_directory：" + path);
         if (!Files.isRegularFile(path)) throw new IOException("NOT_REGULAR_FILE: 不是一般檔案：" + path);
         if (Files.size(path) > MAX_FILE_BYTES) throw new IOException("FILE_TOO_LARGE: 文件超過 1 MB：" + path);
@@ -95,6 +102,7 @@ final class WorkspaceTools implements AgentLoop.Tools {
         catch (IOException e) { throw new IOException("READ_FAILED: 無法讀取：" + path + "；" + e.getMessage(), e); }
         if (text.length() > MAX_FILE_BYTES) throw new IOException("FILE_TOO_LARGE: 編輯器文件超過大小限制：" + path);
         if (text.indexOf('\0') >= 0) throw new IOException("BINARY_FILE: 不支援二進位文件：" + path);
+        sensitive.checkContent(text);
         return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
@@ -102,6 +110,7 @@ final class WorkspaceTools implements AgentLoop.Tools {
         return "Workspace: " + root + ". Read/list/search accept relative or absolute paths, including hidden directories, "
                 + "paths outside the workspace and symbolic links, subject to OS access permissions and text/output size limits. "
                 + "Edits remain bounded to the workspace and exclude hidden, generated and common key/credential paths. "
+                + sensitive.description() + " "
                 + "Use list_directory to locate repositories, find_files for names, and search_text for contents. "
                 + "Results expose next_offset and completeness; incomplete No matches is not proof of absence. "
                 + "MR reports use create_review_report (mr<number>-mollm.md with collision suffix), then append_file in small chunks. "
@@ -121,20 +130,22 @@ final class WorkspaceTools implements AgentLoop.Tools {
             case "run_command" -> runCommand(args, cancellation);
             default -> throw new IOException("Unknown tool: " + name);
         };
+        result = sensitive.redact(result);
         return result.length() > MAX_RESULT_CHARS ? result.substring(0, MAX_RESULT_CHARS) + "\n[output truncated]" : result;
     }
+    @Override public boolean commandsAllowed() { return sensitive.commandsAllowed(); }
 
     private String relative(Path path) {
         return (path.startsWith(root) ? root.relativize(path).toString() : path.toString()).replace('\\', '/');
     }
     private String list(JsonObject args, Gateway.Call call) throws IOException {
-        var scan = FileDiscovery.scan(resolveRead(Gateway.string(args, "path", ".")), true, entry -> !entry.directory(), call);
+        var scan = FileDiscovery.scan(resolveRead(Gateway.string(args, "path", ".")), true, entry -> !entry.directory(), path -> !sensitive.blocks(path), call);
         return discoveryPage(scan, args, false);
     }
     private String discover(String name, JsonObject args, Gateway.Call call) throws IOException {
         String query = name.equals("find_files") ? required(args, "query").toLowerCase(Locale.ROOT) : "";
         var scan = FileDiscovery.scan(resolveRead(Gateway.string(args, "path", ".")), name.equals("find_files"),
-                entry -> entry.path().getFileName().toString().toLowerCase(Locale.ROOT).contains(query), call);
+                entry -> entry.path().getFileName().toString().toLowerCase(Locale.ROOT).contains(query), path -> !sensitive.blocks(path), call);
         return discoveryPage(scan, args, true);
     }
     private String discoveryPage(FileDiscovery.Scan scan, JsonObject args, boolean kinds) throws IOException {
@@ -172,7 +183,7 @@ final class WorkspaceTools implements AgentLoop.Tools {
         String selected = Gateway.string(args, "path", ".");
         Path target = resolveRead(selected);
         var scan = Files.isRegularFile(target) ? new FileDiscovery.Scan(List.of(new FileDiscovery.Entry(target, false)), true, 0)
-                : FileDiscovery.scan(target, true, entry -> !entry.directory(), call);
+                : FileDiscovery.scan(target, true, entry -> !entry.directory(), path -> !sensitive.blocks(path), call);
         int skipped = scan.skipped(); int returned = 0; boolean more = false;
         outer: for (var entry : scan.entries()) {
             var path = entry.path();
@@ -196,6 +207,7 @@ final class WorkspaceTools implements AgentLoop.Tools {
     }
     private String edit(String name, JsonObject args, Gateway.Call call) throws Exception {
         Path path = resolve(required(args, "path"));
+        sensitive.checkPath(path);
         boolean create = name.equals("create_file") || name.equals("create_report_file");
         var reportName = java.util.regex.Pattern.compile("(?i)mr-?(\\d+)[-_](?:review|claude|mollm)(?:-\\d+)?\\.md").matcher(path.getFileName().toString());
         if (name.equals("create_file") && reportName.matches()) {
@@ -293,6 +305,7 @@ final class WorkspaceTools implements AgentLoop.Tools {
     }
 
     private String runCommand(JsonObject args, Gateway.Call call) throws Exception {
+        if (!sensitive.commandsAllowed()) throw new IOException("COMMANDS_BLOCKED: 嚴格敏感檔案保護已停用指令工具；永久授權也不會略過此限制。");
         String executable = required(args, "executable");
         if (!args.has("arguments") || !args.get("arguments").isJsonArray()) throw new IOException("arguments 必須為字串陣列");
         var argv = new ArrayList<String>(); argv.add(executable);

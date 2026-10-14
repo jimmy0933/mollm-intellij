@@ -157,6 +157,7 @@ public final class GatewayTest {
             AttachmentUiTest.run();
             AgentLimitsTest.run();
             ToolReliabilityTest.run();
+            SensitiveFilesTest.run();
         } finally { server.stop(0); executor.shutdownNow(); }
     }
 

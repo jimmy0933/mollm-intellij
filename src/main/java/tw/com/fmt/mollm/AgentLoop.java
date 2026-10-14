@@ -18,6 +18,7 @@ final class AgentLoop {
         String execute(String name, JsonObject arguments, Gateway.Call cancellation) throws Exception;
         default String completionChecks() throws Exception { return ""; }
         default String completionChecks(List<Gateway.Message> history) throws Exception { return completionChecks(); }
+        default boolean commandsAllowed() { return true; }
     }
     record Result(List<Gateway.Message> messages, boolean completed) { }
     private final AgentLimits limits;
@@ -68,7 +69,13 @@ final class AgentLoop {
             var requestMessages = new ArrayList<Gateway.Message>();
             requestMessages.add(new Gateway.Message("system", system + AgentTaskContext.describe(messages))); requestMessages.addAll(messages);
             var body = Gateway.request(model, requestMessages, server);
-            body.add("tools", definitions()); body.addProperty("tool_choice", "auto");
+            var declaredTools = definitions();
+            if (!tools.commandsAllowed()) {
+                var available = new JsonArray();
+                for (var definition : declaredTools) if (!definition.getAsJsonObject().getAsJsonObject("function").get("name").getAsString().equals("run_command")) available.add(definition);
+                declaredTools = available;
+            }
+            body.add("tools", declaredTools); body.addProperty("tool_choice", "auto");
             rounds++;
             activity.accept("Agent 思考中（" + limits.roundProgress(rounds) + "）…");
             var reply = api.stream(body, cancellation, output);

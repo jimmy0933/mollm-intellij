@@ -299,10 +299,11 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         if (encodingImage) { status.setText("請等目前附件處理完成。"); return; }
         if (files.size() > 8) { status.setText("一次最多拖入 8 個檔案。"); return; }
         encodingImage = true; controls(); status.setText("讀取拖入的附件…");
+        var attachmentPolicy = SensitiveFiles.from(settings.getState());
         workers.submit(() -> {
             var attachments = new ArrayList<DroppedFile>(); var errors = new ArrayList<String>();
             for (var file : files) {
-                try { attachments.add(DroppedFile.read(file.toPath())); }
+                try { attachments.add(DroppedFile.read(file.toPath(), attachmentPolicy)); }
                 catch (Exception e) { errors.add(file.getName() + "：" + e.getMessage()); }
             }
             ui(() -> {
@@ -341,7 +342,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
 
     private JPanel helpPanel() {
         var panel = new JPanel(new BorderLayout(8, 8));
-        var text = new JTextArea("MoLLM IntelliJ 0.7.0\n\n"
+        var text = new JTextArea("MoLLM IntelliJ 0.7.1\n\n"
                 + "1. 新增 Base URL 與 API Key。\n2. 重新整理後選擇模型。\n3. Enter 傳送，Shift+Enter 換行；Ctrl+Enter 亦可傳送。\n"
                 + "4. 將圖片或文字檔案拖入對話區／輸入框附加；程式碼選取內容也可拖入草稿。\n\n"
                 + "在對話或輸入框上 Ctrl＋滾輪調整文字大小（10–40），並記住大小。\n\n"
@@ -362,6 +363,8 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 + "連續兩次相同工具錯誤會暫停並保留進度，可調整後續作。設定可開啟每輪串流診斷。\n"
                 + "新增列目錄、依檔名搜尋與分頁；MR 報告使用 mr<編號>-mollm.md，同名採數字後綴，可分段寫入。\n"
                 + "報告基本檢查只確認儲存與格式，不代表程式問題已重現或測試已通過。\n"
+                + "設定新增帳密／Token 保護與檔名規則，預設嚴格模式停用 Agent 指令工具；可改保留指令，但輸出遮蔽不是系統隔離。\n"
+                + "保護於下一次 Agent／續作生效；舊對話及直接貼上的文字／圖片不會自動移除敏感資訊。\n"
                 + "停止會取消待確認操作並終止目前指令，已套用修改仍保留。\n"
                 + "回覆以純文字呈現（含 Markdown 原文），停止或出錯的回覆不加入後續對話歷史。\n"
                 + "切換伺服器或模型會開始新對話。模型刷新時若原模型仍存在則保留歷史。\n"
@@ -417,6 +420,18 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         diagnostics.setToolTipText("顯示結束原因與服務提供的 Token 用量；IDE 日誌也會記錄這些數值，不記錄工具參數內容或金鑰。");
         diagnostics.addActionListener(event -> settings.getState().showStreamDiagnostics = diagnostics.isSelected());
         options.add(new JLabel("問題排查")); options.add(diagnostics);
+        var protect = new JCheckBox("封鎖敏感檔案與可辨識帳密／Token", settings.getState().protectSensitiveFiles);
+        protect.setToolTipText("下一次 Agent／續作生效；既有對話內容不會自動刪除，啟用後建議開新對話。");
+        protect.addActionListener(event -> settings.getState().protectSensitiveFiles = protect.isSelected());
+        options.add(new JLabel("敏感資訊保護")); options.add(protect);
+        var protectionMode = new JComboBox<>(new String[]{"嚴格保護（停用指令工具）", "保留指令（僅遮蔽可辨識輸出）"});
+        protectionMode.setSelectedIndex(settings.getState().sensitiveStrictCommands ? 0 : 1);
+        protectionMode.setToolTipText("保留指令時，指令仍可讀取檔案或存取網路，输出遮蔽不是系統隔離；嚴格模式也無法辨識所有敏感格式。");
+        protectionMode.addActionListener(event -> settings.getState().sensitiveStrictCommands = protectionMode.getSelectedIndex() == 0);
+        options.add(new JLabel("敏感檔案保護方式")); options.add(protectionMode);
+        var sensitiveRules = new JButton("編輯敏感檔案規則");
+        sensitiveRules.addActionListener(event -> new SensitiveFilesDialog(project, settings).show());
+        options.add(new JLabel("敏感檔案規則")); options.add(sensitiveRules);
         rounds.setToolTipText("下一次 Agent 或續作生效；預設 80，最大 200。調高會增加模型請求時間與用量。");
         operations.setToolTipText("下一次 Agent 或續作生效；預設 256，最大 2000。一次模型回合可執行多個工具。");
         rounds.addChangeListener(event -> settings.getState().agentMaxRounds = (Integer) rounds.getValue());
@@ -640,6 +655,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         var call = new Gateway.Call(); activeCall = call;
         String reasoningDisplay = settings.getState().reasoningDisplay;
         boolean showDiagnostics = settings.getState().showStreamDiagnostics;
+        var sensitivePolicy = SensitiveFiles.from(settings.getState());
         status.setText(agent ? "Agent 啟動中…" : "串流回覆中…");
         streamTask = workers.submit(() -> {
             Gateway api = null;
@@ -668,7 +684,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 boolean completed;
                 if (agent) {
                     var root = WorkspaceTools.selectRoot(java.nio.file.Path.of(projectPath), scope);
-                    var tools = new WorkspaceTools(root, new IdeWorkspace(project), new AgentApproval(project, root));
+                    var tools = new WorkspaceTools(root, new IdeWorkspace(project), new AgentApproval(project, root), sensitivePolicy);
                     engine = new AgentLoop(tools, requestHistory, inbox, runLimits);
                     var safeApi = api;
                     var result = engine.run(api, model, server, call, receive, activity -> ui(() -> {
