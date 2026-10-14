@@ -1,11 +1,19 @@
-# MoLLM for IntelliJ — 0.7.1（PR 預覽版）
+# MoLLM for IntelliJ — 0.7.2（PR 預覽版）
 
 將使用者提供的 MoLLM VS Code 0.3.11（MIT，yhho）改寫成 IntelliJ 原生外掛。
 此版提供 **Chat／Agent 模式與用量儀表板**。
 
 安裝包下載：[GitHub Releases](https://github.com/jimmy0933/mollm-intellij/releases)。目前儲存庫為私人，需登入具有存取權限的 GitHub 帳號。
 
-此分支的 0.7.1 預覽包位於 `artifacts/mollm-intellij-0.7.1.zip`，尚未合併或發布正式 Release。
+此分支的 0.7.2 預覽包位於 `artifacts/mollm-intellij-0.7.2.zip`，尚未合併或發布正式 Release。
+
+## 0.7.2：可拖曳對話分隔線與排版
+
+回覆區與輸入區之間改為原生可拖曳分隔線，拖曳時即時調整。比例保存於設定，重開專案、縮放視窗與全螢幕恢復時沿用；非法保存值回退為回覆區約 75%。各區保留最小高度，窄小視窗或附件預覽可能限制可拖曳範圍。
+
+對話頁原本按鈕下方的狀態文字移到按鈕列最右側；長文字縮略顯示，滑鼠懸停查看完整訊息。按鈕維持自然大小，窄視窗自動換列，空間不足時狀態放到最後一列右側。設定／模型／用量頁保留獨立狀態提示。增加文字與輸入區內距、整理按鈕間距，頁籤在窄視窗可水平捲動；色彩與按鈕沿用 IDE 主題。
+
+[版面預覽](artifacts/chat-layout-preview.png) 由 headless Swing 測試產生，實際 IntelliJ 的顏色與控件外觀依 IDE 主題。
 
 ## 0.7.1：帳密／Token 保護
 

@@ -22,6 +22,7 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
         public String reasoningDisplay = "quoted";
         public int chatFontSize;
         public String chatFontFamily = "__chat_default__";
+        public double chatSplitRatio = .75;
         public int usageRefreshSeconds = 60;
         public int interfaceScalePercent = 100;
         public int agentMaxRounds = AgentLimits.DEFAULT_ROUNDS;

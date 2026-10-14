@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>tw.com.fmt.mollm</id>
     <name>MoLLM</name>
-    <version>0.7.1</version>
+    <version>0.7.2</version>
     <vendor>MoLLM IntelliJ port</vendor>
     <description><![CDATA[
       MoLLM chat, coding agent and LiteLLM usage dashboard. Read and search workspace files,
