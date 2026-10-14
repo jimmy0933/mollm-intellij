@@ -49,7 +49,23 @@ final class Gateway {
         Message(String role, String content, List<ToolCall> tools, String toolCallId) { this(role, content, tools, toolCallId, ""); }
         Message { tools = List.copyOf(tools); images = List.copyOf(images); }
     }
-    record Reply(String content, List<ToolCall> tools, String reasoning) { }
+    record TokenUsage(long prompt, long completion, long total) {
+        static TokenUsage unknown() { return new TokenUsage(-1, -1, -1); }
+    }
+    record Reply(String content, List<ToolCall> tools, String reasoning, String finishReason, TokenUsage usage, int requestedOutput) {
+        boolean truncated() { return finishReason.equals("length") || finishReason.equals("max_tokens"); }
+        String diagnostics() {
+            return "finish_reason=" + (finishReason.isEmpty() ? "未提供" : finishReason)
+                    + "; requested_output=" + requestedOutput + "; prompt_tokens=" + count(usage.prompt())
+                    + "; completion_tokens=" + count(usage.completion()) + "; total_tokens=" + count(usage.total());
+        }
+        private static String count(long value) { return value < 0 ? "未提供" : Long.toString(value); }
+    }
+    private static final class StreamState {
+        String finishReason = "";
+        TokenUsage usage = TokenUsage.unknown();
+        int requestedOutput;
+    }
     private static final class ToolParts {
         final StringBuilder id = new StringBuilder();
         final StringBuilder name = new StringBuilder();
@@ -205,6 +221,10 @@ final class Gateway {
         String limitParameter = model.accepts("max_completion_tokens") && !model.accepts("max_tokens")
                 ? "max_completion_tokens" : "max_tokens";
         body.addProperty(limitParameter, Math.max(1, max));
+        if (model.accepts("stream_options")) {
+            var streamOptions = new JsonObject(); streamOptions.addProperty("include_usage", true);
+            body.add("stream_options", streamOptions);
+        }
         if (override != null) {
             if (!override.reasoningEffort.isBlank() && model.accepts("reasoning_effort"))
                 body.addProperty("reasoning_effort", override.reasoningEffort);
@@ -222,6 +242,8 @@ final class Gateway {
         var tools = new TreeMap<Integer, ToolParts>();
         var content = new StringBuilder();
         var reasoning = new StringBuilder();
+        var state = new StreamState();
+        state.requestedOutput = (int) number(body, "max_completion_tokens", number(body, "max_tokens", -1));
         BiConsumer<String, String> receive = (kind, text) -> {
             if (kind.equals("text")) content.append(text);
             if (kind.equals("reasoning")) reasoning.append(text);
@@ -239,7 +261,7 @@ final class Gateway {
             for (String line; (line = reader.readLine()) != null;) {
                 if (call.cancelled()) throw new CancellationException();
                 if (line.isEmpty()) {
-                    if (dispatch(event.toString(), receive, tools)) return reply(content, reasoning, tools);
+                    if (dispatch(event.toString(), receive, tools, state)) return reply(content, reasoning, tools, state);
                     event.setLength(0);
                 } else if (line.startsWith("data:")) {
                     if (!event.isEmpty()) event.append('\n');
@@ -247,13 +269,14 @@ final class Gateway {
                     if (event.length() > 4_000_000) throw new IOException("SSE event 過大");
                 }
             }
-            if (!event.isEmpty() && dispatch(event.toString(), receive, tools)) return reply(content, reasoning, tools);
-            if (!call.cancelled()) throw new IOException("串流提前結束，未收到 [DONE]");
+            if (!event.isEmpty() && dispatch(event.toString(), receive, tools, state)) return reply(content, reasoning, tools, state);
+            if (!call.cancelled()) throw new IOException("STREAM_INCOMPLETE: 串流提前結束，未收到 [DONE]；finish_reason="
+                    + (state.finishReason.isEmpty() ? "未提供" : state.finishReason) + "；工具參數可能不完整，未執行。");
             throw new CancellationException();
         }
     }
 
-    private Reply reply(StringBuilder content, StringBuilder reasoning, Map<Integer, ToolParts> parts) throws IOException {
+    private Reply reply(StringBuilder content, StringBuilder reasoning, Map<Integer, ToolParts> parts, StreamState state) throws IOException {
         var calls = new ArrayList<ToolCall>();
         var ids = new java.util.HashSet<String>();
         for (var value : parts.values()) {
@@ -261,19 +284,30 @@ final class Gateway {
                 throw new IOException("工具呼叫缺少 id／name 或 id 重複");
             calls.add(new ToolCall(value.id.toString(), value.name.toString(), value.arguments.toString()));
         }
-        return new Reply(content.toString(), List.copyOf(calls), reasoning.toString());
+        var reply = new Reply(content.toString(), List.copyOf(calls), reasoning.toString(), state.finishReason, state.usage, state.requestedOutput);
+        com.intellij.openapi.diagnostic.Logger.getInstance(Gateway.class).info("MoLLM stream: " + redact(reply.diagnostics())
+                + "; tool_argument_chars=" + calls.stream().map(call -> call.arguments().length()).toList());
+        return reply;
     }
 
-    private boolean dispatch(String event, BiConsumer<String, String> output, Map<Integer, ToolParts> tools) throws IOException {
+    private boolean dispatch(String event, BiConsumer<String, String> output, Map<Integer, ToolParts> tools, StreamState state) throws IOException {
         if (event.isBlank()) return false;
         if (event.strip().equals("[DONE]")) return true;
         JsonObject chunk;
         try { chunk = JsonParser.parseString(event).getAsJsonObject(); }
         catch (RuntimeException e) { throw new IOException("無效的 SSE JSON", e); }
         if (chunk.has("error")) throw new IOException("閘道錯誤：" + redact(chunk.get("error").toString()));
+        if (chunk.has("usage") && chunk.get("usage").isJsonObject()) {
+            var usage = chunk.getAsJsonObject("usage");
+            state.usage = new TokenUsage((long) number(usage, "prompt_tokens", state.usage.prompt()),
+                    (long) number(usage, "completion_tokens", state.usage.completion()), (long) number(usage, "total_tokens", state.usage.total()));
+        }
         JsonArray choices = array(chunk, "choices");
         if (choices.isEmpty()) return false;
-        JsonObject delta = object(choices.get(0).getAsJsonObject(), "delta");
+        var choice = choices.get(0).getAsJsonObject();
+        if (choice.has("finish_reason") && !choice.get("finish_reason").isJsonNull())
+            state.finishReason = string(choice, "finish_reason", "");
+        JsonObject delta = object(choice, "delta");
         String content = string(delta, "content", "");
         String reasoning = string(delta, "reasoning_content", string(delta, "reasoning", ""));
         if (!reasoning.isEmpty()) output.accept("reasoning", reasoning);

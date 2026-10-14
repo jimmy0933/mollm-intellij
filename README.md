@@ -1,11 +1,22 @@
-# MoLLM for IntelliJ — 0.6.4（PR 預覽版）
+# MoLLM for IntelliJ — 0.7.0（PR 預覽版）
 
 將使用者提供的 MoLLM VS Code 0.3.11（MIT，yhho）改寫成 IntelliJ 原生外掛。
 此版提供 **Chat／Agent 模式與用量儀表板**。
 
 安裝包下載：[GitHub Releases](https://github.com/jimmy0933/mollm-intellij/releases)。目前儲存庫為私人，需登入具有存取權限的 GitHub 帳號。
 
-此分支的 0.6.4 預覽包位於 `artifacts/mollm-intellij-0.6.4.zip`，尚未合併或發布正式 Release。
+此分支的 0.7.0 預覽包位於 `artifacts/mollm-intellij-0.7.0.zip`，尚未合併或發布正式 Release。
+
+## 0.7.0：Agent 工具與報告可靠性
+
+- 新增 `list_directory` 列第一層項目與 `find_files` 依名稱搜尋，避免在多專案工作區用內容搜尋猜 repo 名稱。列表及文字搜尋提供 `offset`／`page_size`、`next_offset` 與完整性標記；超過掃描深度／數量、無權限或文字檔大小限制時，不會把不完整的「No matches」宣稱為完整結果。結果分頁會重新掃描，期間檔案異動可能改變排序與位置。
+- `read_file` 分辨不存在、是資料夾、過大、二進位與讀取失敗；回傳 `chars`、`next_start_line`、`next_start_column`，可接續長行或被輸出大小限制截斷的文字。
+- 工具執行前驗證完整、嚴格 JSON 物件。串流保留 `finish_reason` 與服務提供的 token usage，若為 `length`／`max_tokens`，不執行該回合的工具；缺少用量顯示「未提供」。只在模型宣告支援 `stream_options` 時請求串流用量。IDE 日誌記錄結束原因、數值額度、用量與各工具參數長度，不記錄參數內容、路徑或 API Key；設定「問題排查 → 顯示每輪串流診斷」可在對話顯示。錯誤訊息仍會提供必要診斷。
+- 同工具／目標／原因連續失敗兩次，暫停本段、保留完整工具配對與待讀引導訊息，可調整後按「繼續 Agent」。不設限模式仍有此防止無限重試的機制；恢復時重新計算連續失敗次數。
+- `append_file` 按小段附加既有檔案，要求 `expected_chars`（正規化換行後的 UTF-16 字元數），檢查確認前後的內容變動；同段於相同位置重試不重複附加。仍遵循一次／目錄永久授權。
+- `create_review_report` 以指定專案目錄建立 `mr<編號>-mollm.md`，已有同名檔案採 `-2` 等後綴。若指定子目錄，使用 Agent 工作目錄內最近的 Git repo 根目錄。一般 `create_file` 若使用 `mr51-review.md`／`mr51-claude.md`／`mr51-mollm.md` 等 MR 報告名稱，也會套用命名與同名保留規則；要更新既有報告仍用 `replace_in_file`／`append_file`。
+- `check_review_report` 讀取完整報告，檢查磁碟與編輯器內容、命名、標題、Head／Base／測試狀態欄位及可辨识的風險總表數量。Agent 結束時也會自動檢查本次建立的報告，接續執行可從已配對的成功寫檔結果恢復檢查名單。這只驗證儲存與基本結構，不能證明問題已重現、已編譯或已跑測試。
+- 每輪補上最近的明確 MR 請求與後續使用者引導作為任務提醒，降低把「只 review 此 repo」誤當成「只找既有報告」的機會；不替代模型對需求的理解。
 
 0.6.4 解除 Agent 讀取／列檔／搜尋的路徑排除規則，支援 `.agent`、`.agents`、`.claude` 等隱藏目錄、產出目錄、專案外絕對或相對路徑，以及符號連結。相對路徑以 Agent 工作目錄為起點；實際存取仍取決於作業系統權限。修改與指令工作目錄的原有邊界不變。
 
@@ -80,7 +91,7 @@ Chat 與 Agent 都會把圖片以 OpenAI 相容的 `image_url` PNG data URI 送�
 
 如果閘道把支援工具的模型錯報為不支援，可在 **模型參數** 勾選「強制嘗試工具呼叫」。這項覆寫不會替原本不支援工具的模型增加能力。
 
-工具包含 `list_files`、`read_file`、`search_text`、`replace_in_file`、`create_file` 與 `run_command`。
+工具包含 `list_directory`、`find_files`、`list_files`、`read_file`、`search_text`、`replace_in_file`、`create_file`、`append_file`、`create_review_report`、`check_review_report` 與 `run_command`。
 
 ### Agent 權限
 
@@ -120,7 +131,7 @@ Chat 與 Agent 都會把圖片以 OpenAI 相容的 `image_url` PNG data URI 送�
 - 回覆以可選取的純文字顯示，包含 Markdown 原文；尚未提供 Markdown 預覽。
 - 尚未提供三語介面、自訂 HTTP headers、完整能力覆寫、輸入 token 精確計算或歷史自動摘要。長對話超出模型 context 時，需另開新對話。
 - Chat 的程式碼 context 可透過拖入檔案或選取文字加入草稿；拖入檔案目前讀取已儲存內容。Agent 可自行搜尋／讀取任意可存取的文字檔案，但尚未提供 IntelliJ PSI 符號／參照工具或 MCP 工具。
-- 單次讀檔最多 300 行，單檔最多 1 MB；列檔／搜尋最多掃描 20,000 個項目並收集 5,000 個路徑，列表回傳最多 300 個路徑，搜尋最多 80 個匹配行。大型專案請縮小路徑範圍。
+- 單次讀檔最多 300 行，單檔最多 1 MB；列檔／搜尋最多掃描 20,000 個項目、深度 20 並收集 5,000 個路徑。列表每頁最多 300 個路徑，文字搜尋每頁最多 80 個匹配行；可用回傳的位置繼續下一頁，達掃描上限仍需縮小路徑。搜尋超長行回傳最多 2000 字元的摘錄，完整內容可用 read_file 接續讀取。
 - 每日用量讀取最多 1000 筆，若閘道回報多頁則顯示資料不完整的提示。
 - 此版未用真實 MoLLM 金鑰連線，也未在 IDE 中完成實際互動驗收；安全儲存的實際行為依 IntelliJ Password Safe 設定。
 
