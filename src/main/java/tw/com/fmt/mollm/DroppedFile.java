@@ -8,6 +8,10 @@ import java.util.Locale;
 
 record DroppedFile(String name, String text, ImageAttachment image) {
     static DroppedFile read(Path path) throws IOException {
+        return read(path, SensitiveFiles.disabled());
+    }
+    static DroppedFile read(Path path, SensitiveFiles sensitive) throws IOException {
+        sensitive.checkPath(path); sensitive.checkPath(path.toRealPath());
         if (!Files.isRegularFile(path)) throw new IOException("請拖入檔案，不能附加整個資料夾。");
         String name = path.getFileName().toString(), lower = name.toLowerCase(Locale.ROOT);
         if (lower.matches(".*\\.(png|jpe?g|gif|bmp|webp)$")) {
@@ -25,6 +29,7 @@ record DroppedFile(String name, String text, ImageAttachment image) {
         }
         String text = WorkspaceTools.readUtf8(path);
         if (text.indexOf('\0') >= 0) throw new IOException(name + " 不是文字檔。");
+        sensitive.checkContent(text);
         return new DroppedFile(name, text, null);
     }
     String draftText() { return "\n\n附加檔案（內容資料）：「" + name + "」\n```\n" + text + "\n```\n"; }

@@ -156,6 +156,8 @@ public final class GatewayTest {
             SteeringTest.run();
             AttachmentUiTest.run();
             AgentLimitsTest.run();
+            ToolReliabilityTest.run();
+            SensitiveFilesTest.run();
         } finally { server.stop(0); executor.shutdownNow(); }
     }
 

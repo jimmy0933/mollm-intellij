@@ -174,7 +174,7 @@ public final class AgentTest {
             String events;
             try {
                 var request = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
-                check(request.getAsJsonArray("tools").size() == 6, "All agent tools declared");
+                check(request.getAsJsonArray("tools").size() == 11, "All agent tools declared");
                 JsonArray messages = request.getAsJsonArray("messages");
                 check(messages.get(0).getAsJsonObject().get("role").getAsString().equals("system"), "Agent system context");
                 int step = round.getAndIncrement();

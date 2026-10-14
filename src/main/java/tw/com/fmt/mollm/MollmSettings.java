@@ -27,6 +27,10 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
         public int agentMaxRounds = AgentLimits.DEFAULT_ROUNDS;
         public int agentMaxOperations = AgentLimits.DEFAULT_OPERATIONS;
         public boolean agentUnlimited = false;
+        public boolean showStreamDiagnostics = false;
+        public boolean protectSensitiveFiles = true;
+        public boolean sensitiveStrictCommands = true;
+        public List<String> sensitiveFilePatterns = new ArrayList<>(SensitiveFiles.DEFAULT_PATTERNS);
         public List<DirectoryGrant> directoryGrants = new ArrayList<>();
     }
 
