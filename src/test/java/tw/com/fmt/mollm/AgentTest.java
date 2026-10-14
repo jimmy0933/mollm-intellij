@@ -52,6 +52,12 @@ public final class AgentTest {
         Files.writeString(root.resolve("AGENTS.md"), "Use local tests.");
         Files.writeString(root.resolve(".env"), "PRIVATE=do-not-read");
         Files.createDirectories(root.resolve(".git")); Files.writeString(root.resolve(".git/config"), "PRIVATE=do-not-read");
+        for (String directory : List.of(".agent", ".agents", ".claude", "node_modules", "build")) {
+            Files.createDirectories(root.resolve(directory)); Files.writeString(root.resolve(directory).resolve("rules.md"), "read-access-fixture " + directory);
+        }
+        Files.writeString(root.resolve("private.key"), "read-access-fixture key");
+        Path outside = Files.createTempDirectory(root.getParent(), "outside-read-test-").toRealPath();
+        Files.writeString(outside.resolve("external.md"), "read-access-fixture external");
         Files.write(root.resolve("binary.bin"), new byte[]{0, 1, 2});
         var allow = new WorkspaceTools(root, diskFiles(), approve(true));
         var deny = new WorkspaceTools(root, diskFiles(), approve(false));
@@ -61,7 +67,26 @@ public final class AgentTest {
             check(WorkspaceTools.selectRoot(root, ".").equals(root), "Workspace scope");
             fails(() -> WorkspaceTools.selectRoot(root, ".."), "Scope escapes project");
             check(allow.execute("list_files", args("{}"), token).contains("AGENTS.md"), "Repository instruction discovery");
-            check(!allow.execute("list_files", args("{}"), token).contains(".env"), "Hidden credential files excluded");
+            check(allow.execute("list_files", args("{}"), token).contains(".env"), "Hidden files included in listing");
+            check(allow.execute("read_file", args("{\"path\":\".git/config\"}"), token).contains("PRIVATE="), "Previously excluded hidden directory is readable");
+            check(allow.execute("read_file", args("{\"path\":\".env\"}"), token).contains("PRIVATE="), "Dot file is readable");
+            check(allow.execute("read_file", args("{\"path\":\"private.key\"}"), token).contains("read-access-fixture"), "No extension-based read exclusions");
+            var hiddenMatches = allow.execute("search_text", args("{\"query\":\"read-access-fixture\"}"), token);
+            for (String directory : List.of(".agent", ".agents", ".claude", "node_modules", "build"))
+                check(hiddenMatches.contains(directory + "/rules.md"), "Search includes " + directory);
+            var outsideArgs = new JsonObject(); outsideArgs.addProperty("path", outside.resolve("external.md").toString());
+            check(deny.execute("read_file", outsideArgs, token).contains("read-access-fixture external"), "Absolute outside read does not require write approval");
+            outsideArgs.addProperty("path", "../" + outside.getFileName() + "/external.md");
+            check(allow.execute("read_file", outsideArgs, token).contains("external"), "Parent-relative outside read works");
+            outsideArgs.addProperty("path", outside.toString());
+            check(allow.execute("list_files", outsideArgs, token).contains(outside.resolve("external.md").toString().replace('\\', '/')), "Outside listing returns absolute usable paths");
+            outsideArgs.addProperty("query", "external");
+            check(allow.execute("search_text", outsideArgs, token).contains("external.md:1:"), "Outside directory search works");
+            outsideArgs.addProperty("path", outside.resolve("external.md").toString());
+            check(allow.execute("search_text", outsideArgs, token).contains("external.md:1:"), "Outside single-file search works");
+            outsideArgs.addProperty("old_text", "external"); outsideArgs.addProperty("new_text", "edited");
+            fails(() -> allow.execute("replace_in_file", outsideArgs, token), "Outside edit accepted after enabling outside reads");
+            fails(() -> allow.execute("create_file", args("{\"path\":\".agents/new.md\",\"content\":\"edit\"}"), token), "Hidden write restrictions were removed with reads");
             check(allow.execute("read_file", args("{\"path\":\"Main.java\",\"start_line\":2,\"end_line\":2}"), token).contains("2:   String"), "Numbered file slices");
             check(allow.execute("search_text", args("{\"query\":\"old\"}"), token).contains("Main.java:2:"), "Literal source search");
             check(allow.execute("search_text", args("{\"query\":\"old\",\"path\":\"Main.java\"}"), token).contains("Main.java:2:"), "Search targets a single source file without scanning unrelated paths");

@@ -341,7 +341,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
 
     private JPanel helpPanel() {
         var panel = new JPanel(new BorderLayout(8, 8));
-        var text = new JTextArea("MoLLM IntelliJ 0.6.3\n\n"
+        var text = new JTextArea("MoLLM IntelliJ 0.6.4\n\n"
                 + "1. 新增 Base URL 與 API Key。\n2. 重新整理後選擇模型。\n3. Enter 傳送，Shift+Enter 換行；Ctrl+Enter 亦可傳送。\n"
                 + "4. 將圖片或文字檔案拖入對話區／輸入框附加；程式碼選取內容也可拖入草稿。\n\n"
                 + "在對話或輸入框上 Ctrl＋滾輪調整文字大小（10–40），並記住大小。\n\n"
@@ -355,7 +355,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 + "切換 Agent 後可搜尋與讀取專案、修改／新增檔案、執行指令與測試。\n"
                 + "讀取與搜尋自動執行；每次修改會開啟 diff 確認，指令則顯示完整內容供你允許或拒絕。\n"
                 + "確認時可選「允許一次」或「此工作目錄下永遠允許」；檔案與指令權限分開，在設定的 Agent 權限管理查看／撤銷。\n"
-                + "工具檔案範圍限工作目錄；指令經你允許後仍具有一般系統權限。\n"
+                + "讀取／列檔／搜尋支援隱藏目錄及專案外路徑；修改限工作目錄，指令經你允許後具有一般系統權限。\n"
                 + "在對話輸入框按 Ctrl+V 可貼上截圖，預覽下方可移除；Chat 與 Agent 都可傳送圖片。\n"
                 + "每次最多 4 張、單張 PNG 10 MiB／1600 萬像素、合計 20 MiB；需模型與閘道支援圖片輸入。\n"
                 + "新對話預設 Agent。每段預設 80 模型回合／256 次工具，可在設定調整或勾選「不設限」；達上限可按「繼續 Agent」接續既有進度。\n"
