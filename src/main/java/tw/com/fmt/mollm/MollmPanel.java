@@ -81,6 +81,10 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         super(new BorderLayout(8, 8));
         this.project = project;
         setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        tabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+        var statusColor = UIManager.getColor("Label.infoForeground");
+        if (statusColor != null) status.setForeground(statusColor);
+        status.setFont(status.getFont().deriveFont(Math.max(11f, status.getFont().getSize2D() - 1f)));
         var north = new JPanel(new BorderLayout(6, 0));
         north.add(mode, BorderLayout.WEST);
         north.add(models, BorderLayout.CENTER);
@@ -97,7 +101,15 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         var settingsPage = settingsPanel();
         tabs.addTab("設定", settingsPage);
         settingsButton.addActionListener(event -> tabs.setSelectedComponent(settingsPage));
-        add(tabs, BorderLayout.CENTER); add(status, BorderLayout.SOUTH);
+        add(tabs, BorderLayout.CENTER);
+        var otherPageStatus = new JLabel(status.getText());
+        otherPageStatus.setFont(status.getFont()); otherPageStatus.setForeground(status.getForeground());
+        otherPageStatus.setVisible(false);
+        status.addPropertyChangeListener("text", event -> {
+            otherPageStatus.setText(status.getText()); otherPageStatus.setToolTipText(status.getText());
+        });
+        tabs.addChangeListener(event -> otherPageStatus.setVisible(tabs.getSelectedIndex() != 0));
+        add(otherPageStatus, BorderLayout.SOUTH);
         add.addActionListener(event -> configure(null));
         edit.addActionListener(event -> { if (selectedServer() != null) configure(selectedServer()); });
         remove.addActionListener(event -> removeServer());
@@ -210,14 +222,22 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         int savedSize = settings.getState().chatFontSize;
         setChatFontSize(savedSize > 0 ? savedSize : defaultChatFont.getSize());
         transcript.setToolTipText("Ctrl＋滑鼠滾輪可放大／縮小對話文字。");
-        var panel = new JPanel(new BorderLayout(4, 4));
-        panel.add(chatScrollPane(transcript), BorderLayout.CENTER);
-        var input = new JPanel(new BorderLayout(4, 4));
+        transcript.setMargin(new Insets(12, 12, 12, 12));
+        prompt.setMargin(new Insets(10, 12, 10, 12));
+        var panel = new JPanel(new BorderLayout());
+        var conversationScroll = chatScrollPane(transcript);
+        conversationScroll.setMinimumSize(new Dimension(0, 80));
+        conversationScroll.setBorder(BorderFactory.createEmptyBorder());
+        var input = new JPanel(new BorderLayout(6, 6));
+        input.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
         imagePreviews.setLayout(new BoxLayout(imagePreviews, BoxLayout.X_AXIS));
         imageScroll.setPreferredSize(new Dimension(0, 118));
+        imageScroll.setMinimumSize(new Dimension(0, 118));
         imageScroll.setVisible(false);
         input.add(imageScroll, BorderLayout.NORTH);
-        input.add(chatScrollPane(prompt), BorderLayout.CENTER);
+        var promptScroll = chatScrollPane(prompt);
+        promptScroll.setMinimumSize(new Dimension(0, 64));
+        input.add(promptScroll, BorderLayout.CENTER);
         prompt.setToolTipText("拖入圖片／文字檔案或程式碼；Enter 傳送，Shift+Enter 換行；Ctrl+V 仍可貼上截圖。");
         parallel.addActionListener(event -> launchParallel());
         continueAgent.addActionListener(event -> {
@@ -225,8 +245,11 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
             if (prompt.getText().isBlank() && draftImages.isEmpty()) prompt.setText("請接續尚未完成的任務，沿用目前對話中的工具結果與 review 進度，勿重新開始已完成的檢查；完成剩餘檢查後給出最終結果。");
             send();
         });
-        var actions = new CompactActions(send, stop, newChat, parallel, continueAgent);
-        input.add(actions, BorderLayout.SOUTH); panel.add(input, BorderLayout.SOUTH);
+        var actions = new ChatActionBar(status, send, stop, newChat, parallel, continueAgent);
+        input.add(actions, BorderLayout.SOUTH);
+        var split = new ChatSplitPane(conversationScroll, input, settings.getState().chatSplitRatio,
+                ratio -> settings.getState().chatSplitRatio = ratio);
+        panel.add(split, BorderLayout.CENTER);
         return panel;
     }
 
@@ -342,7 +365,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
 
     private JPanel helpPanel() {
         var panel = new JPanel(new BorderLayout(8, 8));
-        var text = new JTextArea("MoLLM IntelliJ 0.7.1\n\n"
+        var text = new JTextArea("MoLLM IntelliJ 0.7.3\n\n"
                 + "1. 新增 Base URL 與 API Key。\n2. 重新整理後選擇模型。\n3. Enter 傳送，Shift+Enter 換行；Ctrl+Enter 亦可傳送。\n"
                 + "4. 將圖片或文字檔案拖入對話區／輸入框附加；程式碼選取內容也可拖入草稿。\n\n"
                 + "在對話或輸入框上 Ctrl＋滾輪調整文字大小（10–40），並記住大小。\n\n"
@@ -363,7 +386,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 + "連續兩次相同工具錯誤會暫停並保留進度，可調整後續作。設定可開啟每輪串流診斷。\n"
                 + "新增列目錄、依檔名搜尋與分頁；MR 報告使用 mr<編號>-mollm.md，同名採數字後綴，可分段寫入。\n"
                 + "報告基本檢查只確認儲存與格式，不代表程式問題已重現或測試已通過。\n"
-                + "設定新增帳密／Token 保護與檔名規則，預設嚴格模式停用 Agent 指令工具；可改保留指令，但輸出遮蔽不是系統隔離。\n"
+                + "嚴格保護停用任意指令，但保留 Git 審查工具。取得 GitLab MR 更新需獨立允許一次，不 checkout 或修改工作檔案。\n"
                 + "保護於下一次 Agent／續作生效；舊對話及直接貼上的文字／圖片不會自動移除敏感資訊。\n"
                 + "停止會取消待確認操作並終止目前指令，已套用修改仍保留。\n"
                 + "回覆以純文字呈現（含 Markdown 原文），停止或出錯的回覆不加入後續對話歷史。\n"
@@ -424,7 +447,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         protect.setToolTipText("下一次 Agent／續作生效；既有對話內容不會自動刪除，啟用後建議開新對話。");
         protect.addActionListener(event -> settings.getState().protectSensitiveFiles = protect.isSelected());
         options.add(new JLabel("敏感資訊保護")); options.add(protect);
-        var protectionMode = new JComboBox<>(new String[]{"嚴格保護（停用指令工具）", "保留指令（僅遮蔽可辨識輸出）"});
+        var protectionMode = new JComboBox<>(new String[]{"嚴格保護（停用任意指令）", "保留指令（僅遮蔽可辨識輸出）"});
         protectionMode.setSelectedIndex(settings.getState().sensitiveStrictCommands ? 0 : 1);
         protectionMode.setToolTipText("保留指令時，指令仍可讀取檔案或存取網路，输出遮蔽不是系統隔離；嚴格模式也無法辨識所有敏感格式。");
         protectionMode.addActionListener(event -> settings.getState().sensitiveStrictCommands = protectionMode.getSelectedIndex() == 0);

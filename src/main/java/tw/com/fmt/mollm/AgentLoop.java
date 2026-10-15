@@ -51,6 +51,8 @@ final class AgentLoop {
                 + "Read/list/search accept absolute paths or paths relative to the selected workspace, including hidden directories and outside paths. "
                 + "Edits and command working directories must remain workspace-relative. Commands use an executable and argument array, not an implicit shell. "
                 + "For code reviews, locate the relevant repository and change diff first. Focus on changed files and necessary callers; "
+                + "Strict mode still provides git_read and git_fetch_mr: use them to inspect fetched commits or retrieve MR updates; do not claim Git is unavailable because run_command is disabled. "
+                + "Use git_read files for changed paths, then show/diff for individual files. Do not checkout or request exported diffs when these tools can read the commits. "
                 + "avoid repeatedly listing unrelated projects or rereading unchanged content. If output is truncated, request only the missing portion. "
                 + "search_text accepts a file or directory path. Read access has no plugin path exclusions; OS permissions and text/output limits still apply. "
                 + "Use list_directory for repository discovery, find_files for file names, and next_offset for subsequent pages. "
@@ -58,6 +60,7 @@ final class AgentLoop {
                 + "Run check_review_report before claiming the report is complete. Structural checks do not verify code findings. "
                 + "On continuation, use the existing tool results and review progress rather than restarting discovery. "
                 + "Task user messages remain authoritative; new scope or clarification continues the task rather than replacing it with report lookup. "
+                + "Always reply in Traditional Chinese. For MR reviews always create a report with create_review_report, then check it. "
                 + "Finish with a concise summary of edits and actual test results.\n" + tools.context();
         long operations = 0;
         long rounds = 0;
@@ -183,6 +186,15 @@ final class AgentLoop {
                 java.util.Map.of("directory", "string", "mr_number", "integer", "content", "string"), List.of("mr_number", "content")));
         result.add(tool("check_review_report", "Read the complete report and check actual disk save, naming, Head/Base/test status fields and risk-table counts. This only checks basic structure; it does not verify findings or test results.",
                 java.util.Map.of("path", "string"), List.of("path")));
+        var gitRead = tool("git_read", "嚴格保護仍可使用的本機 Git 唯讀工具。repository 為工作目錄內 repo 相對路徑；operation 為 status/refs/log/merge_base/files/diff/show。revision 預設 HEAD；files/diff/merge_base 需 base；show/diff 需 repo 相對 path。分頁使用 offset/page_size。不 checkout、不執行任意指令；敏感檔案與內容仍會封鎖。",
+                java.util.Map.of("repository", "string", "operation", "string", "revision", "string", "base", "string", "path", "string", "offset", "integer", "page_size", "integer"), List.of("operation"));
+        var gitProperties = gitRead.getAsJsonObject("function").getAsJsonObject("parameters").getAsJsonObject("properties");
+        gitProperties.getAsJsonObject("page_size").addProperty("maximum", 200);
+        gitProperties.getAsJsonObject("offset").addProperty("maximum", 1_000_000);
+        var operations = new JsonArray(); List.of("status", "refs", "log", "merge_base", "files", "diff", "show").forEach(operations::add);
+        gitProperties.getAsJsonObject("operation").add("enum", operations); result.add(gitRead);
+        result.add(tool("git_fetch_mr", "透過已設定 HTTP(S) remote 取得 GitLab MR head/merge，使用本機 Git 認證管理員。需獨立允許一次；只更新 refs/mollm/merge-requests/<編號> 與 Git 物件，不 checkout 或改工作檔案。不是任意網路/API 工具。",
+                java.util.Map.of("repository", "string", "remote", "string", "mr_number", "integer"), List.of("mr_number")));
         return result;
     }
 

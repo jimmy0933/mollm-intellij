@@ -158,6 +158,8 @@ public final class GatewayTest {
             AgentLimitsTest.run();
             ToolReliabilityTest.run();
             SensitiveFilesTest.run();
+            ChatLayoutTest.run();
+            GitReviewTest.run();
         } finally { server.stop(0); executor.shutdownNow(); }
     }
 
