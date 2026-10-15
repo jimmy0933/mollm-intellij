@@ -1,11 +1,22 @@
-# MoLLM for IntelliJ — 0.7.2（PR 預覽版）
+# MoLLM for IntelliJ — 0.7.3（PR 預覽版）
 
 將使用者提供的 MoLLM VS Code 0.3.11（MIT，yhho）改寫成 IntelliJ 原生外掛。
 此版提供 **Chat／Agent 模式與用量儀表板**。
 
 安裝包下載：[GitHub Releases](https://github.com/jimmy0933/mollm-intellij/releases)。目前儲存庫為私人，需登入具有存取權限的 GitHub 帳號。
 
-此分支的 0.7.2 預覽包位於 `artifacts/mollm-intellij-0.7.2.zip`，尚未合併或發布正式 Release。
+此分支的 0.7.3 預覽包位於 `artifacts/mollm-intellij-0.7.3.zip`，尚未合併或發布正式 Release。
+
+## 0.7.3：嚴格保護下的 Git／GitLab MR 審查
+
+嚴格保護維持停用 `run_command`，另外提供兩個固定用途工具，不必切換到保留任意指令模式，也不需 checkout 最新 commit：
+
+- `git_read`：本機唯讀 `status`、`refs`、`log`、`merge_base`、變更檔案 `files`、單檔 `show`／`diff`。由安裝的 Git 讀取物件與 pack，依 revision 取得版本內容，不把 `.git/objects` 當純文字。repo 必須在 Agent 工作範圍內；只接受參照與相對檔案路徑，不能指定執行檔、旗標、checkout 或 shell。文字分頁預設 120 行、最多 200 行，Git 原始輸出上限 2 MB。單檔與差異仍遵守敏感路徑／內容保護，diff 回傳前檢查兩端完整版本。
+- `git_fetch_mr`：使用 repo 的 HTTP(S) remote（預設 origin），取得 GitLab MR head 與可用的 merge ref，寫到 `refs/mollm/merge-requests/<編號>/head`／`merge`。每次需獨立允許一次，永久指令權限不略過；拒絕後本段不重複詢問相同 MR。不 checkout、不變更 HEAD／索引／工作檔案、不寫 FETCH_HEAD，不套用其他 refmap／prune 或自動 maintenance。merge ref 無法更新時明確警告，不能將舊 ref 當成最新 base。
+
+工具停用 fsmonitor、外部 diff／textconv、hook、互動認證與任意 Git 環境覆寫。網路僅允許 HTTP(S)，不支援 SSH／file／ext remote；帶帳密或 query 的 remote URL 會被拒絕。使用本機 Git Credential Manager，帳密不提供給模型，需先在本機完成認證。此版為 GitLab MR Git 傳輸，不是通用網路／GitLab REST API，也不讀 MR 留言或執行建置／測試。
+
+內建提示明確說明嚴格模式仍有 Git 工具，避免模型要求使用者匯出 diff 或切換分支。MR 審查完成需用 `create_review_report` 產出 `mr<編號>-mollm.md`（同名數字後綴）並檢查，回覆與報告使用繁體中文。
 
 ## 0.7.2：可拖曳對話分隔線與排版
 
@@ -109,7 +120,7 @@ Chat 與 Agent 都會把圖片以 OpenAI 相容的 `image_url` PNG data URI 送�
 
 如果閘道把支援工具的模型錯報為不支援，可在 **模型參數** 勾選「強制嘗試工具呼叫」。這項覆寫不會替原本不支援工具的模型增加能力。
 
-工具包含 `list_directory`、`find_files`、`list_files`、`read_file`、`search_text`、`replace_in_file`、`create_file`、`append_file`、`create_review_report`、`check_review_report` 與 `run_command`。
+工具包含 `list_directory`、`find_files`、`list_files`、`read_file`、`search_text`、`replace_in_file`、`create_file`、`append_file`、`create_review_report`、`check_review_report`、`git_read`、`git_fetch_mr` 與 `run_command`（嚴格模式停用）。
 
 ### Agent 權限
 

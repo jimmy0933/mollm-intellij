@@ -37,7 +37,8 @@ final class SensitiveFilesTest {
         check(custom.blocks(Path.of("config/private/nested/file.txt")) && !custom.blocks(Path.of("config/public/file.txt")), "Nested custom glob scope works");
         for (String text : List.of("db.password=fixture-password-987", "{\"apiKey\":\"fixture-password-987\"}", "<password>fixture-password-987</password>",
                 "Authorization: Bearer fixture-password-987", "Authorization: Basic Zml4dHVyZS11c2VyOnBhc3N3b3Jk", "https://fixture-user:fixture-password-987@host/path",
-                "ghp_" + "A".repeat(36), "sk-" + "B".repeat(30), "-----BEGIN PRIVATE KEY-----\nfixture-password-987\n-----END PRIVATE KEY-----")) {
+                "ghp_" + "A".repeat(36), "glpat-" + "T".repeat(25), "https://fixture-password-987@host/path",
+                "sk-" + "B".repeat(30), "-----BEGIN PRIVATE KEY-----\nfixture-password-987\n-----END PRIVATE KEY-----")) {
             fails(() -> policy.checkContent(text), "SENSITIVE_CONTENT_BLOCKED");
             check(!policy.redact(text).equals(text) && !policy.redact(text).contains("fixture-password-987"), "Sensitive output is redacted");
         }

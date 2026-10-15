@@ -32,11 +32,13 @@ final class WorkspaceTools implements AgentLoop.Tools {
     interface Approval {
         boolean change(Change change, Gateway.Call cancellation) throws Exception;
         boolean command(Command command, Gateway.Call cancellation) throws Exception;
+        default boolean gitFetch(Command command, Gateway.Call cancellation) throws Exception { return command(command, cancellation); }
     }
     private final Path root;
     private final FilesAccess files;
     private final Approval approval;
     private final SensitiveFiles sensitive;
+    private GitReview gitReview;
     private final Set<String> deniedChanges = new java.util.HashSet<>();
     private record CommandIdentity(List<String> argv, Path directory) { }
     private final Set<CommandIdentity> deniedCommands = new java.util.HashSet<>();
@@ -111,6 +113,8 @@ final class WorkspaceTools implements AgentLoop.Tools {
                 + "paths outside the workspace and symbolic links, subject to OS access permissions and text/output size limits. "
                 + "Edits remain bounded to the workspace and exclude hidden, generated and common key/credential paths. "
                 + sensitive.description() + " "
+                + "git_read remains available in strict mode for local Git status/refs/log/merge_base/files/diff/show. "
+                + "Use git_fetch_mr for GitLab MR updates after a separate one-time approval, without checkout. "
                 + "Use list_directory to locate repositories, find_files for names, and search_text for contents. "
                 + "Results expose next_offset and completeness; incomplete No matches is not proof of absence. "
                 + "MR reports use create_review_report (mr<number>-mollm.md with collision suffix), then append_file in small chunks. "
@@ -128,12 +132,17 @@ final class WorkspaceTools implements AgentLoop.Tools {
             case "create_review_report" -> createReport(args, cancellation);
             case "check_review_report" -> checkReport(args);
             case "run_command" -> runCommand(args, cancellation);
+            case "git_read", "git_fetch_mr" -> gitReview().execute(name, args, cancellation);
             default -> throw new IOException("Unknown tool: " + name);
         };
         result = sensitive.redact(result);
         return result.length() > MAX_RESULT_CHARS ? result.substring(0, MAX_RESULT_CHARS) + "\n[output truncated]" : result;
     }
     @Override public boolean commandsAllowed() { return sensitive.commandsAllowed(); }
+    private GitReview gitReview() {
+        if (gitReview == null) gitReview = new GitReview(root, sensitive, approval);
+        return gitReview;
+    }
 
     private String relative(Path path) {
         return (path.startsWith(root) ? root.relativize(path).toString() : path.toString()).replace('\\', '/');

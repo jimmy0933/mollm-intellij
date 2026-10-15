@@ -18,9 +18,9 @@ final class SensitiveFiles {
             "(?im)([\\\"']?(?:[a-z0-9_.-]*[_ .-])?(?:password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|secret|authorization|username)[\\\"']?\\s*(?::|=(?!=))\\s*)"
                     + "(\\\"[^\\\"\\r\\n]*\\\"|'[^'\\r\\n]*'|[^\\s,;#}]+)");
     private static final Pattern XML = Pattern.compile("(?is)(<(?:password|passwd|token|apiKey|secret|username)>)([^<]+)(</(?:password|passwd|token|apiKey|secret|username)>)");
-    private static final Pattern TOKEN = Pattern.compile("\\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+)\\b");
+    private static final Pattern TOKEN = Pattern.compile("\\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|(?:AKIA|ASIA)[A-Z0-9]{16}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+)\\b");
     private static final Pattern BEARER = Pattern.compile("(?i)((?:Bearer|Basic)\\s+)([A-Za-z0-9._~+/=-]{4,})");
-    private static final Pattern URL_CREDENTIALS = Pattern.compile("(?i)([a-z][a-z0-9+.-]*://)([^\\s/@:]+:[^\\s/@]+)@");
+    private static final Pattern URL_CREDENTIALS = Pattern.compile("(?i)([a-z][a-z0-9+.-]*://)([^\\s/@]+)@");
     private static final Pattern PRIVATE_KEY = Pattern.compile("(?s)-----BEGIN (?:[A-Z ]*PRIVATE KEY)-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)");
     private final boolean enabled;
     private final boolean strictCommands;
@@ -43,7 +43,7 @@ final class SensitiveFiles {
     String description() {
         if (!enabled) return "Sensitive-file protection is disabled.";
         return "Sensitive-file protection is enabled. Configured paths and files containing recognizable credentials/tokens are not readable. "
-                + (strictCommands ? "run_command is disabled; do not attempt command workarounds." : "Commands remain available, but their output is heuristically redacted; this does not sandbox command file/network access.");
+                + (strictCommands ? "run_command is disabled. Use dedicated git_read/git_fetch_mr tools for Git review; do not attempt arbitrary-command workarounds." : "Commands remain available, but their output is heuristically redacted; this does not sandbox command file/network access.");
     }
     boolean blocks(Path path) {
         if (!enabled) return false;

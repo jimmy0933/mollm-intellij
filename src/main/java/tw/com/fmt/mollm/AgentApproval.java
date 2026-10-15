@@ -39,12 +39,20 @@ final class AgentApproval implements WorkspaceTools.Approval {
         return review(null, command, cancellation);
     }
     private boolean review(WorkspaceTools.Change change, WorkspaceTools.Command command, Gateway.Call cancellation) throws Exception {
+        return review(change, command, cancellation, true);
+    }
+    @Override public boolean gitFetch(WorkspaceTools.Command command, Gateway.Call cancellation) throws Exception {
+        AgentLoop.checkCancelled(cancellation);
+        if (project.isDisposed()) return false;
+        return review(null, command, cancellation, false);
+    }
+    private boolean review(WorkspaceTools.Change change, WorkspaceTools.Command command, Gateway.Call cancellation, boolean remember) throws Exception {
         var decision = new CompletableFuture<Boolean>();
         var dialog = new AtomicReference<ReviewDialog>();
         ApplicationManager.getApplication().invokeLater(() -> {
             if (project.isDisposed() || cancellation.cancelled()) { decision.complete(false); return; }
             try {
-                var value = new ReviewDialog(project, root, permissions, change, command, cancellation, decision);
+                var value = new ReviewDialog(project, root, permissions, change, command, cancellation, decision, remember);
                 dialog.set(value); value.show();
             } catch (Exception e) { decision.completeExceptionally(e); }
         }, ModalityState.nonModal());
@@ -72,16 +80,20 @@ final class AgentApproval implements WorkspaceTools.Approval {
         private final java.nio.file.Path root;
         private final DirectoryPermissions permissions;
         private final Gateway.Call cancellation;
+        private final boolean remember;
         private boolean closed;
         ReviewDialog(Project project, java.nio.file.Path root, DirectoryPermissions permissions, WorkspaceTools.Change change,
-                     WorkspaceTools.Command command, Gateway.Call cancellation, CompletableFuture<Boolean> decision) {
+                     WorkspaceTools.Command command, Gateway.Call cancellation, CompletableFuture<Boolean> decision, boolean remember) {
             super(project, false);
             this.project = project; this.change = change; this.command = command; this.decision = decision;
             this.root = root; this.permissions = permissions; this.cancellation = cancellation;
+            this.remember = remember;
             setModal(false); setTitle(change == null ? "MoLLM Agent — 確認指令" : "MoLLM Agent — 確認檔案修改");
+            if (!remember) setTitle("MoLLM Agent — 取得 GitLab MR 更新");
             setOKButtonText("允許一次"); setCancelButtonText("拒絕"); init();
         }
         @Override protected Action[] createActions() {
+            if (!remember) return new Action[]{getOKAction(), getCancelAction()};
             var always = new DialogWrapperAction("此工作目錄下永遠允許") {
                 @Override protected void doAction(java.awt.event.ActionEvent event) {
                     if (cancellation.cancelled() || project.isDisposed()) { doCancelAction(); return; }
@@ -100,6 +112,7 @@ final class AgentApproval implements WorkspaceTools.Approval {
                     + (change == null ? "永遠允許會授權此工作目錄及子目錄中的所有指令；檔案修改需另外授權。"
                     : "永遠允許會授權此工作目錄及子目錄中的所有檔案修改／新增；指令需另外授權。")
                     + "\n可在 MoLLM 設定 → Agent 權限管理中撤銷。");
+            if (!remember) scope.setText("GitLab MR 更新：" + root + "\n僅允許這次取得 MR 物件與專用參照，不 checkout、不變更工作檔案；既有永久指令授權不適用。");
             scope.setEditable(false); scope.setLineWrap(true); scope.setWrapStyleWord(true);
             if (change != null) {
                 scope.append("\n本次檔案：" + change.path());
