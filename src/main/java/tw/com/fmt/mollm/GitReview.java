@@ -108,12 +108,39 @@ final class GitReview {
         if (!approval.gitFetch(preview, call)) { deniedFetches.add(identity); return "Denied: 未取得 MR 更新；本機狀態未變更。"; }
         if (!repo.toRealPath().equals(repo) || !checked(repo, call, "remote", "get-url", remote).trim().equals(url))
             throw new IOException("GIT_REMOTE_CHANGED: 確認期間專案或 remote 已變動，未連線；請重新確認。");
-        checked(repo, call, arguments.toArray(String[]::new));
-        arguments.set(arguments.size() - 1, "+refs/merge-requests/" + mr + "/merge:" + target + "/merge");
-        var merge = run(repo, call, arguments);
-        String head = checked(repo, call, "rev-parse", "--verify", target + "/head").trim();
+        String head = "";
+        boolean mergeValid = false;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            checked(repo, call, arguments.toArray(String[]::new));
+            head = checked(repo, call, "rev-parse", "--verify", target + "/head").trim();
+
+            var mergeArgs = new ArrayList<>(arguments);
+            mergeArgs.set(mergeArgs.size() - 1, "+refs/merge-requests/" + mr + "/merge:" + target + "/merge");
+            var merge = run(repo, call, mergeArgs);
+
+            if (merge.exit() == 0) {
+                var verify = run(repo, call, List.of("log", "-1", "--format=%P", target + "/merge"));
+                if (verify.exit() == 0) {
+                    var parents = verify.text().trim().split("\\s+");
+                    if (List.of(parents).contains(head)) {
+                        mergeValid = true;
+                        break;
+                    }
+                }
+            } else {
+                break; // If merge fetch fails completely, no need to retry consistency
+            }
+            if (!mergeValid && attempt < 2) {
+                try { Thread.sleep(2000); } catch (InterruptedException e) { throw new IOException("GIT_INTERRUPTED: Fetch interrupted."); }
+            }
+        }
+
+        if (!mergeValid) {
+            run(repo, call, List.of("update-ref", "-d", target + "/merge"));
+        }
+
         return "已取得 MR " + mr + " 更新；head=" + head + "；參照=" + target + "/head。\n"
-                + (merge.exit() == 0 ? "merge 參照已更新：" + target + "/merge；可用 git_read show/log 讀取父 commit。" : "遠端 merge 參照目前無法取得；請勿使用舊 merge 參照判定 base，先確認比較基準。")
+                + (mergeValid ? "merge 參照已更新：" + target + "/merge；可用 git_read show/log 讀取父 commit。" : "遠端 merge 參照目前無法取得或版本不一致；請勿使用舊 merge 參照判定 base，先確認比較基準。")
                 + "\n未 checkout、未變更分支、索引或工作檔案；只更新物件與專用參照。";
     }
     private static List<String> command(List<String> operation) throws IOException {

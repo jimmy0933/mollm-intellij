@@ -38,18 +38,25 @@ final class SensitiveFilesTest {
         for (String text : List.of("db.password=fixture-password-987", "{\"apiKey\":\"fixture-password-987\"}", "<password>fixture-password-987</password>",
                 "Authorization: Bearer fixture-password-987", "Authorization: Basic Zml4dHVyZS11c2VyOnBhc3N3b3Jk", "https://fixture-user:fixture-password-987@host/path",
                 "ghp_" + "A".repeat(36), "glpat-" + "T".repeat(25), "https://fixture-password-987@host/path",
+                "password: \"Example(Only)123!\"", "password: \"ExampleOnly123;\"", "password: \"Example Only 123!\"",
                 "sk-" + "B".repeat(30), "-----BEGIN PRIVATE KEY-----\nfixture-password-987\n-----END PRIVATE KEY-----")) {
             fails(() -> policy.checkContent(text), "SENSITIVE_CONTENT_BLOCKED");
-            check(!policy.redact(text).equals(text) && !policy.redact(text).contains("fixture-password-987"), "Sensitive output is redacted");
+            check(!policy.redact(text).equals(text) && !policy.redact(text).contains("fixture-password-987") && !policy.redact(text).contains("Example"), "Sensitive output is redacted");
         }
         policy.checkContent("password=${DB_PASSWORD}\ntoken=null\npublicName=product"); checks++;
+        policy.checkContent("password=System.getenv(\"DB_PASS\");"); checks++;
+        policy.checkContent("password=process.env.DB_PASS;"); checks++;
         check(SensitiveFiles.disabled().redact("password=fixture-password-987").contains("fixture-password-987"), "Disabled policy preserves explicitly requested legacy behavior");
         Path root = Files.createTempDirectory(Path.of("build"), "sensitive-").toRealPath();
         Files.writeString(root.resolve(".env"), "password=fixture-password-987"); Files.writeString(root.resolve("application.yml"), "server: safe");
         Files.writeString(root.resolve("ordinary.txt"), "password=fixture-password-987\npublic text"); Files.writeString(root.resolve("safe.txt"), "public text");
+        Files.writeString(root.resolve("bearer.txt"), "Authorization: Bearer Example(123)");
+        Files.writeString(root.resolve("xml.txt"), "<password>Example(123)</password>");
         Files.createDirectories(root.resolve(".agents")); Files.writeString(root.resolve(".agents/SKILL.md"), "review instructions");
         fails(() -> DroppedFile.read(root.resolve(".env"), policy), "SENSITIVE_FILE_BLOCKED");
         fails(() -> DroppedFile.read(root.resolve("ordinary.txt"), policy), "SENSITIVE_CONTENT_BLOCKED");
+        fails(() -> DroppedFile.read(root.resolve("bearer.txt"), policy), "SENSITIVE_CONTENT_BLOCKED");
+        fails(() -> DroppedFile.read(root.resolve("xml.txt"), policy), "SENSITIVE_CONTENT_BLOCKED");
         check(DroppedFile.read(root.resolve("safe.txt"), policy).text().equals("public text"), "Safe file attachments remain usable");
         var reads = new AtomicInteger(); var approvals = new AtomicInteger();
         var access = new WorkspaceTools.FilesAccess() {

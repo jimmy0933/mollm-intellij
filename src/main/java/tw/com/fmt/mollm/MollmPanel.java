@@ -735,10 +735,10 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 ui(() -> {
                     if (activeCall != call) return;
                     history.clear(); history.addAll(completedHistory);
+                    canContinueAgent = agent && !completed;
                     if (call.cancelled()) {
                         transcript.append("\n\n[已停止；已完成的操作仍保留]\n"); status.setText("已停止。"); finish(call); return;
                     }
-                    canContinueAgent = agent && !completed;
                     status.setText(completed ? (agent ? "Agent 完成。請檢查檔案變更與測試結果。" : "回覆完成。") : "Agent 本段未完成；請查看停止原因，調整後按「繼續 Agent」。"); finish(call);
                 });
             } catch (Exception e) {
@@ -747,7 +747,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
                 List<Gateway.Message> checkpoint = engine == null ? List.of() : engine.snapshot();
                 ui(() -> {
                     if (activeCall != call) return;
-                    if (agent && !checkpoint.isEmpty()) { history.clear(); history.addAll(checkpoint); }
+                    if (agent && !checkpoint.isEmpty()) { history.clear(); history.addAll(checkpoint); canContinueAgent = true; }
                     if (checkpoint.isEmpty()) {
                         draftImages.addAll(images); renderImages();
                         if (prompt.getText().isBlank()) prompt.setText(draft);

@@ -109,6 +109,21 @@ final class GitReviewTest {
             String fetched = git.execute("git_fetch_mr", args("{\"mr_number\":4}"), call);
             check(fetched.contains(head) && approvals.get() == 1, "Approved MR fetch works over real loopback HTTP with packed objects");
             check(setup(root, "rev-parse", "refs/mollm/merge-requests/4/head").trim().equals(head), "Fetch updates only dedicated MR head ref");
+            check(fetched.contains("目前無法取得或版本不一致"), "MR merge fallback gracefully if it is invalid or not actually merged from head");
+
+            // Create a real valid merge commit to test valid merge ref fetching.
+            setup(root, "checkout", "-b", "mr-branch", head);
+            setup(root, "checkout", base);
+            setup(root, "checkout", "-b", "base-branch");
+            setup(root, "merge", "mr-branch", "-m", "merge commit");
+            String validMerge = setup(root, "rev-parse", "HEAD").trim();
+            setup(root, "update-ref", "refs/merge-requests/5/head", head); setup(root, "update-ref", "refs/merge-requests/5/merge", validMerge);
+
+            // Reset to original head and index to maintain test assumptions
+            setup(root, "checkout", base);
+            String fetchedValid = git.execute("git_fetch_mr", args("{\"mr_number\":5}"), call);
+            check(fetchedValid.contains("merge 參照已更新"), "MR merge ref is accepted when it actually has head as a parent");
+
             check(Files.readString(root.resolve(".git/HEAD")).equals(originalHead) && java.util.Arrays.equals(Files.readAllBytes(root.resolve(".git/index")), originalIndex)
                     && Files.readString(root.resolve("Main.java")).equals("user unsaved-on-disk work\n"), "Git reading and fetch preserve branch, index and dirty working file");
             check(!Files.exists(root.resolve(".git/FETCH_HEAD")), "Fetch does not overwrite FETCH_HEAD");

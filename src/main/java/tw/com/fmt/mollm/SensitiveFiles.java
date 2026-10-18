@@ -75,10 +75,21 @@ final class SensitiveFiles {
         matcher.appendTail(result); return result.toString();
     }
     private static boolean looksSensitive(String value) {
-        String normalized = value.replaceAll("^[\\\"']|[\\\"']$", "").trim().toLowerCase(Locale.ROOT);
-        if (normalized.isEmpty() || List.of("null", "none", "true", "false", "[redacted]", "[redacted token]", "[redacted private key]").contains(normalized)) return false;
-        // References to environment variables and expressions are not literal secrets.
-        return !normalized.startsWith("${") && !normalized.startsWith("$env:") && !normalized.contains("(") && !normalized.endsWith(";");
+        boolean isQuoted = value.length() >= 2 && ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'")));
+        String normalized = value.replaceAll("^[\\\"']|[\\\"']$", "").trim();
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        if (lower.isEmpty() || List.of("null", "none", "true", "false", "[redacted]", "[redacted token]", "[redacted private key]").contains(lower)) return false;
+
+        // References to environment variables are not literal secrets.
+        if (normalized.startsWith("${") || normalized.startsWith("$env:")) return false;
+        if (isQuoted) return true;
+
+        // Unquoted expressions (e.g. method calls or variable references) are not literal secrets.
+        // E.g. System.getenv(...) or process.env.DB_PASS;
+        if (normalized.matches("(?i)^[a-z_][a-z0-9_.]*\\([\"'].*[\"']\\);?$")) return false;
+        if (normalized.matches("(?i)^[a-z_][a-z0-9_.]*;$")) return false;
+
+        return true;
     }
     private static Pattern glob(String rule) {
         String value = rule.trim().replace('\\', '/'); var result = new StringBuilder("(?:^|/)");
