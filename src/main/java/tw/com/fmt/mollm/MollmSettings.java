@@ -33,12 +33,38 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
         public boolean sensitiveStrictCommands = true;
         public List<String> sensitiveFilePatterns = new ArrayList<>(SensitiveFiles.DEFAULT_PATTERNS);
         public List<DirectoryGrant> directoryGrants = new ArrayList<>();
+        public List<McpServerConfig> mcpServers = new ArrayList<>();
     }
 
     public static final class DirectoryGrant {
         public String directory = "";
         public boolean allowFiles;
         public boolean allowCommands;
+    }
+
+    // Mutable beans are required by IntelliJ's XML state serializer. Never store keys here.
+
+    public static final class McpServerConfig {
+        public String id = UUID.randomUUID().toString();
+        public String name = "New MCP Server";
+        public boolean enabled = true;
+        public String transport = "stdio"; // stdio or sse
+        public String projectScope = ""; // empty for global
+
+        // stdio
+        public String executable = "npx";
+        public List<String> args = new ArrayList<>();
+        public String workingDirectory = "";
+        public Map<String, String> env = new LinkedHashMap<>();
+
+        // sse
+        public String baseUrl = "";
+        public Map<String, String> headers = new LinkedHashMap<>();
+        public boolean passAuthToken = false; // Auth token is stored in PasswordSafe
+
+        public int requestTimeoutSeconds = 60;
+
+        @Override public String toString() { return name; }
     }
 
     // Mutable beans are required by IntelliJ's XML state serializer. Never store keys here.
@@ -67,6 +93,7 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
     @Override public @NotNull Data getState() { return data; }
     @Override public void loadState(@NotNull Data state) { data = state; }
     List<Server> servers() { return List.copyOf(data.servers); }
+    List<McpServerConfig> mcpServers() { return List.copyOf(data.mcpServers); }
     int usageRefreshSeconds() {
         return switch (data.usageRefreshSeconds) {
             case 30, 60, 180 -> data.usageRefreshSeconds;
@@ -81,5 +108,15 @@ public final class MollmSettings implements PersistentStateComponent<MollmSettin
     }
     void remove(String id) {
         data.servers = data.servers.stream().filter(server -> !server.id.equals(id)).toList();
+    }
+
+    void saveMcpServer(McpServerConfig server) {
+        var updated = new ArrayList<>(data.mcpServers);
+        updated.removeIf(existing -> existing.id.equals(server.id));
+        updated.add(server);
+        data.mcpServers = updated;
+    }
+    void removeMcpServer(String id) {
+        data.mcpServers = data.mcpServers.stream().filter(server -> !server.id.equals(id)).toList();
     }
 }

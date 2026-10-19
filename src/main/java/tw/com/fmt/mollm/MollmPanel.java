@@ -47,6 +47,7 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
     }
     private final JButton parameters = new JButton("模型參數");
     private final JButton settingsButton = new JButton("設定");
+    private final JButton mcpButton = new JButton("MCP 管理");
     private final JButton fullScreenButton = new JButton("全螢幕");
     private final JComboBox<String> viewMode = new JComboBox<>(new String[]{"一般大小", "全螢幕"});
     private final InterfaceScale interfaceScale = new InterfaceScale();
@@ -101,6 +102,13 @@ final class MollmPanel extends JPanel implements Disposable, com.intellij.openap
         var settingsPage = settingsPanel();
         tabs.addTab("設定", settingsPage);
         settingsButton.addActionListener(event -> tabs.setSelectedComponent(settingsPage));
+
+        mcpButton.addActionListener(event -> {
+            var dialog = new McpManagerDialog(project);
+            dialog.showAndGet();
+            McpConnectionManager.initialize(project);
+        });
+
         add(tabs, BorderLayout.CENTER);
         var otherPageStatus = new JLabel(status.getText());
         otherPageStatus.setFont(status.getFont()); otherPageStatus.setForeground(status.getForeground());
