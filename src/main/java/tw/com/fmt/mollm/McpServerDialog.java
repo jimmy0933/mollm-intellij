@@ -11,11 +11,11 @@ import java.awt.*;
 final class McpServerDialog extends DialogWrapper {
     private final MollmSettings.McpServerConfig original;
     private final JTextField name = new JTextField(28);
-    private final JComboBox<String> transport = new JComboBox<>(new String[]{"stdio", "sse", "streamable_http"});
+    private final JComboBox<String> transport = new JComboBox<>(new String[]{"stdio", "sse"});
 
     // stdio
     private final JTextField executable = new JTextField(28);
-    private final JTextField args = new JTextField(28);
+    private final JTextArea args = new JTextArea(4, 28);
     private final JTextField workingDirectory = new JTextField(28);
 
     // sse & http
@@ -34,7 +34,7 @@ final class McpServerDialog extends DialogWrapper {
         transport.setSelectedItem(initial.transport);
 
         executable.setText(initial.executable);
-        args.setText(String.join(" ", initial.args));
+        args.setText(String.join("\n", initial.args));
         workingDirectory.setText(initial.workingDirectory);
 
         baseUrl.setText(initial.baseUrl);
@@ -52,7 +52,7 @@ final class McpServerDialog extends DialogWrapper {
 
         panel.add(new JLabel("=== stdio 設定 ===")); panel.add(new JLabel(""));
         panel.add(new JLabel("執行檔")); panel.add(executable);
-        panel.add(new JLabel("參數 (空格分隔)")); panel.add(args);
+        panel.add(new JLabel("參數 (每行一個)")); panel.add(new JScrollPane(args));
         panel.add(new JLabel("工作目錄")); panel.add(workingDirectory);
 
         panel.add(new JLabel("=== SSE/HTTP 設定 ===")); panel.add(new JLabel(""));
@@ -85,7 +85,7 @@ final class McpServerDialog extends DialogWrapper {
         value.transport = (String) transport.getSelectedItem();
 
         value.executable = executable.getText().trim();
-        value.args = java.util.Arrays.stream(args.getText().split(" ")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+        value.args = java.util.Arrays.stream(args.getText().split("\n")).map(String::trim).filter(s -> !s.isEmpty()).toList();
         value.workingDirectory = workingDirectory.getText().trim();
 
         value.baseUrl = baseUrl.getText().trim();

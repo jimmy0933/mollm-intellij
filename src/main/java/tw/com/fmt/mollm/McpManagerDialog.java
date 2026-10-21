@@ -36,8 +36,9 @@ final class McpManagerDialog extends DialogWrapper {
             var dialog = new McpServerDialog(project, null);
             if (dialog.showAndGet()) {
                 var config = dialog.server();
-                saveConfig(config, dialog);
-                listModel.addElement(config);
+                if (saveConfig(config, dialog)) {
+                    listModel.addElement(config);
+                }
             }
         });
 
@@ -47,9 +48,10 @@ final class McpManagerDialog extends DialogWrapper {
             var dialog = new McpServerDialog(project, selected);
             if (dialog.showAndGet()) {
                 var config = dialog.server();
-                saveConfig(config, dialog);
-                int idx = list.getSelectedIndex();
-                listModel.set(idx, config);
+                if (saveConfig(config, dialog)) {
+                    int idx = list.getSelectedIndex();
+                    listModel.set(idx, config);
+                }
             }
         });
 
@@ -69,11 +71,38 @@ final class McpManagerDialog extends DialogWrapper {
         init();
     }
 
-    private void saveConfig(MollmSettings.McpServerConfig config, McpServerDialog dialog) {
-        MollmSettings.getInstance().saveMcpServer(config);
-        if (dialog.shouldClearPassword() || dialog.getPassword().length > 0) {
-            ApiKeys.set(config.id, dialog.shouldClearPassword() ? "" : new String(dialog.getPassword()));
+    private boolean saveConfig(MollmSettings.McpServerConfig config, McpServerDialog dialog) {
+        // Safe migration and storage of secrets
+        try {
+            for (var entry : config.env.entrySet()) {
+                if (!"__SECRET__".equals(entry.getValue())) {
+                    boolean isSecret = entry.getKey().toLowerCase().contains("key") || entry.getKey().toLowerCase().contains("token") || entry.getKey().toLowerCase().contains("secret") || entry.getKey().toLowerCase().contains("pass");
+                    if (isSecret || entry.getValue().startsWith("Bearer ")) {
+                        ApiKeys.set("mcp_env_" + config.id + "_" + entry.getKey(), entry.getValue());
+                        entry.setValue("__SECRET__");
+                    }
+                }
+            }
+            for (var entry : config.headers.entrySet()) {
+                if (!"__SECRET__".equals(entry.getValue())) {
+                    boolean isSecret = entry.getKey().toLowerCase().contains("auth") || entry.getKey().toLowerCase().contains("key") || entry.getKey().toLowerCase().contains("token");
+                    if (isSecret || entry.getValue().startsWith("Bearer ")) {
+                        ApiKeys.set("mcp_header_" + config.id + "_" + entry.getKey(), entry.getValue());
+                        entry.setValue("__SECRET__");
+                    }
+                }
+            }
+
+            if (dialog.shouldClearPassword() || dialog.getPassword().length > 0) {
+                ApiKeys.set(config.id, dialog.shouldClearPassword() ? "" : new String(dialog.getPassword()));
+            }
+        } catch (Exception ex) {
+            Messages.showErrorDialog(project, "儲存密碼失敗，設定不會被儲存：" + ex.getMessage(), "儲存失敗");
+            return false;
         }
+
+        MollmSettings.getInstance().saveMcpServer(config);
+        return true;
     }
 
     private void importFromJson() {
@@ -130,8 +159,9 @@ final class McpManagerDialog extends DialogWrapper {
                     }
                     if (previewDialog.showAndGet()) {
                         var finalConfig = previewDialog.server();
-                        saveConfig(finalConfig, previewDialog);
-                        listModel.addElement(finalConfig);
+                        if (saveConfig(finalConfig, previewDialog)) {
+                            listModel.addElement(finalConfig);
+                        }
                     }
                 }
             } catch (Exception ex) {

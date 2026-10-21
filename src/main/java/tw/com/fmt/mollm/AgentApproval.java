@@ -38,6 +38,12 @@ final class AgentApproval implements WorkspaceTools.Approval {
         if (permissions.allows(root, command.directory(), DirectoryPermissions.Kind.COMMANDS)) return true;
         return review(null, command, cancellation);
     }
+    @Override public boolean mcpTool(String serverName, String toolName, String args, Gateway.Call cancellation) throws Exception {
+        AgentLoop.checkCancelled(cancellation);
+        if (project.isDisposed()) return false;
+        var command = new WorkspaceTools.Command(java.util.List.of(serverName, toolName, args), root, 60);
+        return reviewMcp(command, cancellation, true);
+    }
     private boolean review(WorkspaceTools.Change change, WorkspaceTools.Command command, Gateway.Call cancellation) throws Exception {
         return review(change, command, cancellation, true);
     }
@@ -52,7 +58,32 @@ final class AgentApproval implements WorkspaceTools.Approval {
         ApplicationManager.getApplication().invokeLater(() -> {
             if (project.isDisposed() || cancellation.cancelled()) { decision.complete(false); return; }
             try {
-                var value = new ReviewDialog(project, root, permissions, change, command, cancellation, decision, remember);
+                var value = new ReviewDialog(project, root, permissions, change, command, cancellation, decision, remember, false);
+                dialog.set(value); value.show();
+            } catch (Exception e) { decision.completeExceptionally(e); }
+        }, ModalityState.nonModal());
+        try {
+            while (true) {
+                AgentLoop.checkCancelled(cancellation);
+                if (project.isDisposed()) return false;
+                try { return decision.get(150, TimeUnit.MILLISECONDS); }
+                catch (TimeoutException ignored) { /* Poll cancellation while waiting for user review. */ }
+                catch (ExecutionException e) { throw new IllegalStateException("確認視窗無法開啟", e.getCause()); }
+            }
+        } finally {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                var value = dialog.get();
+                if (value != null && !value.closed) value.close(DialogWrapper.CANCEL_EXIT_CODE);
+            }, ModalityState.any());
+        }
+    }
+    private boolean reviewMcp(WorkspaceTools.Command command, Gateway.Call cancellation, boolean remember) throws Exception {
+        var decision = new CompletableFuture<Boolean>();
+        var dialog = new AtomicReference<ReviewDialog>();
+        ApplicationManager.getApplication().invokeLater(() -> {
+            if (project.isDisposed() || cancellation.cancelled()) { decision.complete(false); return; }
+            try {
+                var value = new ReviewDialog(project, root, permissions, null, command, cancellation, decision, remember, true);
                 dialog.set(value); value.show();
             } catch (Exception e) { decision.completeExceptionally(e); }
         }, ModalityState.nonModal());
@@ -82,18 +113,20 @@ final class AgentApproval implements WorkspaceTools.Approval {
         private final Gateway.Call cancellation;
         private final boolean remember;
         private boolean closed;
-        ReviewDialog(Project project, java.nio.file.Path root, DirectoryPermissions permissions, WorkspaceTools.Change change,
-                     WorkspaceTools.Command command, Gateway.Call cancellation, CompletableFuture<Boolean> decision, boolean remember) {
+        private boolean isMcp;
+
+        ReviewDialog(Project project, java.nio.file.Path root, DirectoryPermissions permissions, WorkspaceTools.Change change, WorkspaceTools.Command command, Gateway.Call cancellation, CompletableFuture<Boolean> decision, boolean remember, boolean isMcp) {
             super(project, false);
             this.project = project; this.change = change; this.command = command; this.decision = decision;
             this.root = root; this.permissions = permissions; this.cancellation = cancellation;
-            this.remember = remember;
-            setModal(false); setTitle(change == null ? "MoLLM Agent — 確認指令" : "MoLLM Agent — 確認檔案修改");
-            if (!remember) setTitle("MoLLM Agent — 取得 GitLab MR 更新");
-            setOKButtonText("允許一次"); setCancelButtonText("拒絕"); init();
+            this.remember = remember; this.isMcp = isMcp;
+            setModal(false); setTitle(isMcp ? "MoLLM Agent — 確認 MCP 工具執行" : (change == null ? "MoLLM Agent — 確認指令" : "MoLLM Agent — 確認檔案修改"));
+            if (!remember && !isMcp) setTitle("MoLLM Agent — 取得 GitLab MR 更新");
+            setOKButtonText("允許"); setCancelButtonText("拒絕"); init();
         }
+
         @Override protected Action[] createActions() {
-            if (!remember) return new Action[]{getOKAction(), getCancelAction()};
+            if (!remember || isMcp) return new Action[]{getOKAction(), getCancelAction()};
             var always = new DialogWrapperAction("此工作目錄下永遠允許") {
                 @Override protected void doAction(java.awt.event.ActionEvent event) {
                     if (cancellation.cancelled() || project.isDisposed()) { doCancelAction(); return; }
@@ -112,7 +145,7 @@ final class AgentApproval implements WorkspaceTools.Approval {
                     + (change == null ? "永遠允許會授權此工作目錄及子目錄中的所有指令；檔案修改需另外授權。"
                     : "永遠允許會授權此工作目錄及子目錄中的所有檔案修改／新增；指令需另外授權。")
                     + "\n可在 MoLLM 設定 → Agent 權限管理中撤銷。");
-            if (!remember) scope.setText("GitLab MR 更新：" + root + "\n僅允許這次取得 MR 物件與專用參照，不 checkout、不變更工作檔案；既有永久指令授權不適用。");
+            if (!remember && !isMcp) scope.setText("GitLab MR 更新：" + root + "\n僅允許這次取得 MR 物件與專用參照，不 checkout、不變更工作檔案；既有永久指令授權不適用。");
             scope.setEditable(false); scope.setLineWrap(true); scope.setWrapStyleWord(true);
             if (change != null) {
                 scope.append("\n本次檔案：" + change.path());
@@ -123,15 +156,26 @@ final class AgentApproval implements WorkspaceTools.Approval {
                 panel.add(diff.getComponent(), BorderLayout.CENTER);
                 panel.add(new JLabel("套用後會儲存檔案；可在 IntelliJ 使用 Undo 復原。"), BorderLayout.SOUTH);
             } else {
-                var text = new JTextArea("工作目錄：" + command.directory() + "\n逾時：" + command.timeoutSeconds() + " 秒\n\n"
-                        + "Executable:\n" + command.argv().getFirst() + "\n\nArguments (JSON):\n"
-                        + new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(command.argv().subList(1, command.argv().size())));
-                text.setEditable(false); text.setLineWrap(true); text.setWrapStyleWord(true);
-                panel.add(new JScrollPane(text), BorderLayout.CENTER);
-                var notice = new JTextArea("指令使用已儲存的檔案，不會自動儲存你其他的編輯。\n"
-                        + "工作目錄不是作業系統沙箱；指令可存取專案外的檔案或網路，請確認完整內容。");
-                notice.setEditable(false); notice.setLineWrap(true); notice.setWrapStyleWord(true);
-                panel.add(notice, BorderLayout.SOUTH);
+                if (isMcp) {
+                    var text = new JTextArea("MCP 伺服器：" + command.argv().get(0) + "\n工具名稱：" + command.argv().get(1) + "\n\n"
+                            + "參數 (JSON):\n" + command.argv().get(2));
+                    text.setEditable(false); text.setLineWrap(true); text.setWrapStyleWord(true);
+                    panel.add(new JScrollPane(text), BorderLayout.CENTER);
+                    var notice = new JTextArea("MCP 工具可能會修改系統狀態或存取外部資源。\n請確認這項操作是安全的。");
+                    notice.setEditable(false); notice.setLineWrap(true); notice.setWrapStyleWord(true);
+                    panel.add(notice, BorderLayout.SOUTH);
+                    scope.setText("MCP 獨立授權：此工具執行不會繼承工作目錄的永久授權。");
+                } else {
+                    var text = new JTextArea("工作目錄：" + command.directory() + "\n逾時：" + command.timeoutSeconds() + " 秒\n\n"
+                            + "Executable:\n" + command.argv().getFirst() + "\n\nArguments (JSON):\n"
+                            + new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(command.argv().subList(1, command.argv().size())));
+                    text.setEditable(false); text.setLineWrap(true); text.setWrapStyleWord(true);
+                    panel.add(new JScrollPane(text), BorderLayout.CENTER);
+                    var notice = new JTextArea("指令使用已儲存的檔案，不會自動儲存你其他的編輯。\n"
+                            + "工作目錄不是作業系統沙箱；指令可存取專案外的檔案或網路，請確認完整內容。");
+                    notice.setEditable(false); notice.setLineWrap(true); notice.setWrapStyleWord(true);
+                    panel.add(notice, BorderLayout.SOUTH);
+                }
             }
             panel.add(scope, BorderLayout.NORTH);
             return panel;
