@@ -3,12 +3,12 @@ package tw.com.fmt.mollm;
 import com.intellij.openapi.project.Project;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
-import io.modelcontextprotocol.client.transport.customizer.McpAsyncHttpClientRequestCustomizer;
+import io.modelcontextprotocol.client.transport.WebFluxSseClientTransport;
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.json.McpJsonMapper;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -55,12 +55,12 @@ final class McpConnectionManager {
                     builder.workingDirectory(config.workingDirectory);
                 }
 
-        Map<String, String> resolvedEnv = new HashMap<>(config.env);
-        for (Map.Entry<String, String> entry : resolvedEnv.entrySet()) {
-            if ("__SECRET__".equals(entry.getValue())) {
-                entry.setValue(ApiKeys.get("mcp_env_" + config.id + "_" + entry.getKey()));
-            }
-        }
+                Map<String, String> resolvedEnv = new HashMap<>(config.env);
+                for (Map.Entry<String, String> entry : resolvedEnv.entrySet()) {
+                    if ("__SECRET__".equals(entry.getValue())) {
+                        entry.setValue(ApiKeys.get("mcp_env_" + config.id + "_" + entry.getKey()));
+                    }
+                }
 
                 if (!resolvedEnv.isEmpty()) {
                     builder.env(resolvedEnv);
@@ -68,20 +68,18 @@ final class McpConnectionManager {
                 var transport = new StdioClientTransport(builder.build(), jsonMapper);
                 client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(config.requestTimeoutSeconds)).build();
             } else if ("sse".equals(config.transport)) {
-                var builder = HttpClientSseClientTransport.builder(config.baseUrl);
+                var webClientBuilder = WebClient.builder().baseUrl(config.baseUrl);
 
-                builder.httpRequestCustomizer(requestBuilder -> {
-                    // Set custom headers
-
-                    Map<String, String> resolvedHeaders = new HashMap<>(config.headers);
-                    for (Map.Entry<String, String> entry : resolvedHeaders.entrySet()) {
-                        if ("__SECRET__".equals(entry.getValue())) {
-                            entry.setValue(ApiKeys.get("mcp_header_" + config.id + "_" + entry.getKey()));
-                        }
+                Map<String, String> resolvedHeaders = new HashMap<>(config.headers);
+                for (Map.Entry<String, String> entry : resolvedHeaders.entrySet()) {
+                    if ("__SECRET__".equals(entry.getValue())) {
+                        entry.setValue(ApiKeys.get("mcp_header_" + config.id + "_" + entry.getKey()));
                     }
-                    for (var entry : resolvedHeaders.entrySet()) {
+                }
 
-                        requestBuilder.header(entry.getKey(), entry.getValue());
+                webClientBuilder.defaultHeaders(httpHeaders -> {
+                    for (var entry : resolvedHeaders.entrySet()) {
+                        httpHeaders.add(entry.getKey(), entry.getValue());
                     }
 
                     // Inject auth token from PasswordSafe if requested
@@ -90,25 +88,15 @@ final class McpConnectionManager {
                         if (token != null && !token.isBlank()) {
                             // Automatically prefix with Bearer if there's no custom Authorization scheme already
                             if (!token.startsWith("Bearer ") && !token.startsWith("Basic ") && !resolvedHeaders.containsKey("Authorization")) {
-                                requestBuilder.header("Authorization", "Bearer " + token);
+                                httpHeaders.add("Authorization", "Bearer " + token);
                             } else {
-                                requestBuilder.header("Authorization", token);
+                                httpHeaders.add("Authorization", token);
                             }
                         }
                     }
                 });
 
-                var transport = builder.build();
-                client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(config.requestTimeoutSeconds)).build();
-            } else if ("streamable_http".equals(config.transport)) {
-                Map<String, String> resolvedHeaders = new HashMap<>(config.headers);
-                for (Map.Entry<String, String> entry : resolvedHeaders.entrySet()) {
-                    if ("__SECRET__".equals(entry.getValue())) {
-                        entry.setValue(ApiKeys.get("mcp_header_" + config.id + "_" + entry.getKey()));
-                    }
-                }
-                String token = config.passAuthToken ? ApiKeys.get(config.id) : null;
-                var transport = new StreamableHttpClientTransport(config.baseUrl, resolvedHeaders, token, (com.fasterxml.jackson.databind.ObjectMapper) jsonMapper);
+                var transport = new WebFluxSseClientTransport(webClientBuilder);
                 client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(config.requestTimeoutSeconds)).build();
             }
 

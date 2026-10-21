@@ -38,6 +38,7 @@ final class WorkspaceTools implements AgentLoop.Tools {
     interface Approval {
         boolean change(Change change, Gateway.Call cancellation) throws Exception;
         boolean command(Command command, Gateway.Call cancellation) throws Exception;
+        default boolean mcpTool(String serverName, String toolName, String args, Gateway.Call cancellation) throws Exception { return command(new Command(java.util.List.of("MCP: " + serverName + " -> " + toolName, "args: " + args), Path.of("."), 60), cancellation); }
         default boolean gitFetch(Command command, Gateway.Call cancellation) throws Exception { return command(command, cancellation); }
     }
     private final Path root;
@@ -150,20 +151,11 @@ final class WorkspaceTools implements AgentLoop.Tools {
             if (client == null) throw new IOException("MCP Client not found");
 
             // Perform independent authorization for MCP tools
-            boolean approved = approval.command(new Command(java.util.List.of("MCP: " + targetConfig.name + " -> " + toolName, "args: " + args.toString()), root, targetConfig.requestTimeoutSeconds), cancellation);
-            if (!approved) throw new java.util.concurrent.CancellationException("User denied MCP tool execution");
+            boolean approved = approval.mcpTool(targetConfig.name, toolName, args.toString(), cancellation);
+            if (!approved) return "Denied by user. Tool was not executed.";
 
             // Execute tool
-            java.util.Map<String, Object> mapArgs = new java.util.HashMap<>();
-            for (var entry : args.entrySet()) {
-                if (entry.getValue().isJsonPrimitive()) {
-                    if (entry.getValue().getAsJsonPrimitive().isString()) mapArgs.put(entry.getKey(), entry.getValue().getAsString());
-                    else if (entry.getValue().getAsJsonPrimitive().isNumber()) mapArgs.put(entry.getKey(), entry.getValue().getAsNumber());
-                    else if (entry.getValue().getAsJsonPrimitive().isBoolean()) mapArgs.put(entry.getKey(), entry.getValue().getAsBoolean());
-                } else {
-                    mapArgs.put(entry.getKey(), entry.getValue().toString()); // fallback for complex structures
-                }
-            }
+            java.util.Map<String, Object> mapArgs = (java.util.Map<String, Object>) new com.google.gson.Gson().fromJson(args, java.util.Map.class);
 
             var mcpCall = new io.modelcontextprotocol.spec.McpSchema.CallToolRequest(toolName, mapArgs);
             var mcpResult = client.callTool(mcpCall);

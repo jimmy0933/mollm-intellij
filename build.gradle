@@ -1,4 +1,11 @@
-plugins { id 'java' }
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '8.3.3'
+}
+
+repositories {
+    mavenCentral()
+}
 
 group = 'tw.com.fmt.mollm'
 version = '0.7.3'
@@ -13,13 +20,33 @@ if (sdkBuild.tokenize('.')[0] != minimumBuild.tokenize('.')[0]) {
     throw new GradleException("Use an IntelliJ ${minimumBuild.tokenize('.')[0]} SDK for this baseline; selected SDK is ${sdkBuild}")
 }
 dependencies {
+    implementation("io.modelcontextprotocol.sdk:mcp:0.7.0") {
+        exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation "io.modelcontextprotocol.sdk:mcp-spring-webflux:0.7.0"
+    implementation "io.projectreactor:reactor-core:3.7.0"
+    implementation "com.fasterxml.jackson.core:jackson-databind:2.17.0"
+    implementation "org.springframework.boot:spring-boot-starter-webflux:3.4.0"
+
     compileOnly fileTree(dir: "${ideaHome.get()}/lib", include: '*.jar')
     testImplementation fileTree(dir: "${ideaHome.get()}/lib", include: '*.jar')
 }
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 21
 }
+
+shadowJar {
+    relocate 'com.fasterxml.jackson', 'tw.com.fmt.mollm.shadow.jackson'
+    relocate 'org.springframework', 'tw.com.fmt.mollm.shadow.springframework'
+    relocate 'reactor', 'tw.com.fmt.mollm.shadow.reactor'
+    relocate 'io.netty', 'tw.com.fmt.mollm.shadow.netty'
+    relocate 'org.reactivestreams', 'tw.com.fmt.mollm.shadow.reactivestreams'
+    exclude 'META-INF/spring.*'
+    exclude 'META-INF/spring/**'
+}
+
 tasks.named('jar') { from('LICENSE.txt') }
 tasks.register('gatewayTest', JavaExec) {
     dependsOn testClasses
@@ -28,11 +55,14 @@ tasks.register('gatewayTest', JavaExec) {
     jvmArgs '--add-modules', 'jdk.httpserver', '-Djava.awt.headless=true'
 }
 tasks.named('check') { dependsOn 'gatewayTest' }
-// The integration harness is a standalone Java program, not a JUnit test class.
 tasks.named('test') { enabled = false }
+
 tasks.register('buildPlugin', Zip) {
-    dependsOn jar, check
+    dependsOn shadowJar, check
     archiveFileName = "mollm-intellij-${version}.zip"
     destinationDirectory = layout.buildDirectory.dir('distributions')
-    into('mollm-intellij/lib') { from tasks.jar }
+
+    into('mollm-intellij/lib') {
+        from shadowJar.archiveFile
+    }
 }
