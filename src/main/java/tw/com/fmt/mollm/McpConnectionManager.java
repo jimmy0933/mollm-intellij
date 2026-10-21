@@ -14,8 +14,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+
 
 final class McpConnectionManager {
     private static final Map<String, McpSyncClient> clients = new ConcurrentHashMap<>();
@@ -24,6 +26,18 @@ final class McpConnectionManager {
     static void initialize(Project project) {
         // Called when project opens or settings change.
         // We do lazy initialization during tool usage to avoid hanging startup.
+        var configs = MollmSettings.getInstance().mcpServers();
+        // Remove disabled or deleted servers
+        java.util.Set<String> activeIds = configs.stream()
+                .filter(c -> c.enabled)
+                .map(c -> c.id)
+                .collect(Collectors.toSet());
+
+        List<String> toClose = new ArrayList<>();
+        for (String id : clients.keySet()) {
+            if (!activeIds.contains(id)) toClose.add(id);
+        }
+        toClose.forEach(McpConnectionManager::close);
     }
 
     static synchronized McpSyncClient getClient(MollmSettings.McpServerConfig config) {
@@ -40,8 +54,16 @@ final class McpConnectionManager {
                 if (!config.workingDirectory.isBlank()) {
                     builder.workingDirectory(config.workingDirectory);
                 }
-                if (!config.env.isEmpty()) {
-                    builder.env(config.env);
+
+        Map<String, String> resolvedEnv = new HashMap<>(config.env);
+        for (Map.Entry<String, String> entry : resolvedEnv.entrySet()) {
+            if ("__SECRET__".equals(entry.getValue())) {
+                entry.setValue(ApiKeys.get("mcp_env_" + config.id + "_" + entry.getKey()));
+            }
+        }
+
+                if (!resolvedEnv.isEmpty()) {
+                    builder.env(resolvedEnv);
                 }
                 var transport = new StdioClientTransport(builder.build(), jsonMapper);
                 client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(config.requestTimeoutSeconds)).build();
@@ -50,7 +72,15 @@ final class McpConnectionManager {
 
                 builder.httpRequestCustomizer(requestBuilder -> {
                     // Set custom headers
-                    for (var entry : config.headers.entrySet()) {
+
+                    Map<String, String> resolvedHeaders = new HashMap<>(config.headers);
+                    for (Map.Entry<String, String> entry : resolvedHeaders.entrySet()) {
+                        if ("__SECRET__".equals(entry.getValue())) {
+                            entry.setValue(ApiKeys.get("mcp_header_" + config.id + "_" + entry.getKey()));
+                        }
+                    }
+                    for (var entry : resolvedHeaders.entrySet()) {
+
                         requestBuilder.header(entry.getKey(), entry.getValue());
                     }
 
@@ -59,7 +89,7 @@ final class McpConnectionManager {
                         String token = ApiKeys.get(config.id);
                         if (token != null && !token.isBlank()) {
                             // Automatically prefix with Bearer if there's no custom Authorization scheme already
-                            if (!token.startsWith("Bearer ") && !token.startsWith("Basic ") && !config.headers.containsKey("Authorization")) {
+                            if (!token.startsWith("Bearer ") && !token.startsWith("Basic ") && !resolvedHeaders.containsKey("Authorization")) {
                                 requestBuilder.header("Authorization", "Bearer " + token);
                             } else {
                                 requestBuilder.header("Authorization", token);
@@ -69,6 +99,16 @@ final class McpConnectionManager {
                 });
 
                 var transport = builder.build();
+                client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(config.requestTimeoutSeconds)).build();
+            } else if ("streamable_http".equals(config.transport)) {
+                Map<String, String> resolvedHeaders = new HashMap<>(config.headers);
+                for (Map.Entry<String, String> entry : resolvedHeaders.entrySet()) {
+                    if ("__SECRET__".equals(entry.getValue())) {
+                        entry.setValue(ApiKeys.get("mcp_header_" + config.id + "_" + entry.getKey()));
+                    }
+                }
+                String token = config.passAuthToken ? ApiKeys.get(config.id) : null;
+                var transport = new StreamableHttpClientTransport(config.baseUrl, resolvedHeaders, token, (com.fasterxml.jackson.databind.ObjectMapper) jsonMapper);
                 client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(config.requestTimeoutSeconds)).build();
             }
 
@@ -83,6 +123,19 @@ final class McpConnectionManager {
         }
 
         return client;
+    }
+
+
+    static Map<String, McpSyncClient> getActiveClients() {
+        var configs = MollmSettings.getInstance().mcpServers();
+        Map<String, McpSyncClient> active = new HashMap<>();
+        for (var config : configs) {
+            if (config.enabled) {
+                var client = getClient(config);
+                if (client != null) active.put(config.id, client);
+            }
+        }
+        return active;
     }
 
     static synchronized void close(String serverId) {
