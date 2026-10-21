@@ -195,6 +195,53 @@ final class AgentLoop {
         gitProperties.getAsJsonObject("operation").add("enum", operations); result.add(gitRead);
         result.add(tool("git_fetch_mr", "透過已設定 HTTP(S) remote 取得 GitLab MR head/merge，使用本機 Git 認證管理員。需獨立允許一次；只更新 refs/mollm/merge-requests/<編號> 與 Git 物件，不 checkout 或改工作檔案。不是任意網路/API 工具。",
                 java.util.Map.of("repository", "string", "remote", "string", "mr_number", "integer"), List.of("mr_number")));
+
+        // Add MCP tools
+        try {
+            var activeClients = McpConnectionManager.getActiveClients();
+            var servers = MollmSettings.getInstance().mcpServers();
+            for (var server : servers) {
+                if (!server.enabled) continue;
+                var client = activeClients.get(server.id);
+                if (client != null) {
+                    var mcpTools = client.listTools(null);
+                    if (mcpTools != null && mcpTools.tools() != null) {
+                        for (var mcpTool : mcpTools.tools()) {
+                            var function = new JsonObject();
+                            function.addProperty("name", server.id + "__" + mcpTool.name()); // Namespace to avoid collision
+                            function.addProperty("description", mcpTool.description() != null ? mcpTool.description() : "MCP Tool from " + server.name);
+                            // Ensure schema is properly formatted as JSON Schema for parameters
+                            try {
+                                if (mcpTool.inputSchema() != null) {
+                                    // Assuming inputSchema is serializable to JSON/map
+                                    String schemaStr = io.modelcontextprotocol.json.McpJsonDefaults.getMapper().writeValueAsString(mcpTool.inputSchema());
+                                    function.add("parameters", JsonParser.parseString(schemaStr));
+                                } else {
+                                    var emptyParams = new JsonObject();
+                                    emptyParams.addProperty("type", "object");
+                                    emptyParams.add("properties", new JsonObject());
+                                    function.add("parameters", emptyParams);
+                                }
+                            } catch (Exception e) {
+                                // Default empty params
+                                var emptyParams = new JsonObject();
+                                emptyParams.addProperty("type", "object");
+                                emptyParams.add("properties", new JsonObject());
+                                function.add("parameters", emptyParams);
+                            }
+
+                            var toolObj = new JsonObject();
+                            toolObj.addProperty("type", "function");
+                            toolObj.add("function", function);
+                            result.add(toolObj);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Ignore if MCP fails to fetch tools, shouldn't block the agent loop
+        }
+
         return result;
     }
 

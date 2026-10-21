@@ -1,6 +1,12 @@
 package tw.com.fmt.mollm;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonPrimitive;
+import java.util.concurrent.CancellationException;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -123,18 +129,76 @@ final class WorkspaceTools implements AgentLoop.Tools {
 
     @Override public String execute(String name, JsonObject args, Gateway.Call cancellation) throws Exception {
         AgentLoop.checkCancelled(cancellation);
-        String result = switch (name) {
-            case "list_files" -> list(args, cancellation);
-            case "list_directory", "find_files" -> discover(name, args, cancellation);
-            case "read_file" -> readLines(args);
-            case "search_text" -> search(args, cancellation);
-            case "replace_in_file", "create_file", "append_file" -> edit(name, args, cancellation);
-            case "create_review_report" -> createReport(args, cancellation);
-            case "check_review_report" -> checkReport(args);
-            case "run_command" -> runCommand(args, cancellation);
-            case "git_read", "git_fetch_mr" -> gitReview().execute(name, args, cancellation);
-            default -> throw new IOException("Unknown tool: " + name);
-        };
+        String result;
+
+        if (name.contains("__")) {
+            // It's an MCP tool call (server.id__toolName)
+            String[] parts = name.split("__", 2);
+            String serverId = parts[0];
+            String toolName = parts[1];
+
+            var servers = MollmSettings.getInstance().mcpServers();
+            MollmSettings.McpServerConfig targetConfig = null;
+            for (var c : servers) {
+                if (c.id.equals(serverId)) { targetConfig = c; break; }
+            }
+            if (targetConfig == null || !targetConfig.enabled) {
+                throw new IOException("MCP Server disabled or deleted");
+            }
+
+            var client = McpConnectionManager.getClient(targetConfig);
+            if (client == null) throw new IOException("MCP Client not found");
+
+            // Perform independent authorization for MCP tools
+            boolean approved = approval.command(new Command(java.util.List.of("MCP: " + targetConfig.name + " -> " + toolName, "args: " + args.toString()), root, targetConfig.requestTimeoutSeconds), cancellation);
+            if (!approved) throw new java.util.concurrent.CancellationException("User denied MCP tool execution");
+
+            // Execute tool
+            java.util.Map<String, Object> mapArgs = new java.util.HashMap<>();
+            for (var entry : args.entrySet()) {
+                if (entry.getValue().isJsonPrimitive()) {
+                    if (entry.getValue().getAsJsonPrimitive().isString()) mapArgs.put(entry.getKey(), entry.getValue().getAsString());
+                    else if (entry.getValue().getAsJsonPrimitive().isNumber()) mapArgs.put(entry.getKey(), entry.getValue().getAsNumber());
+                    else if (entry.getValue().getAsJsonPrimitive().isBoolean()) mapArgs.put(entry.getKey(), entry.getValue().getAsBoolean());
+                } else {
+                    mapArgs.put(entry.getKey(), entry.getValue().toString()); // fallback for complex structures
+                }
+            }
+
+            var mcpCall = new io.modelcontextprotocol.spec.McpSchema.CallToolRequest(toolName, mapArgs);
+            var mcpResult = client.callTool(mcpCall);
+
+            if (mcpResult != null && mcpResult.content() != null) {
+                StringBuilder sb = new StringBuilder();
+                for (var cont : mcpResult.content()) {
+                    if (cont instanceof io.modelcontextprotocol.spec.McpSchema.TextContent textCont) {
+                        sb.append(textCont.text()).append("\n");
+                    } else if (cont instanceof io.modelcontextprotocol.spec.McpSchema.ImageContent) {
+                        sb.append("[Image Content Omitted]\n");
+                    }
+                }
+                result = sb.toString();
+                if (Boolean.TRUE.equals(mcpResult.isError())) {
+                    result = "Error: " + result;
+                }
+            } else {
+                result = "Success (no output)";
+            }
+        } else {
+            result = switch (name) {
+                case "list_files" -> list(args, cancellation);
+                case "list_directory", "find_files" -> discover(name, args, cancellation);
+                case "read_file" -> readLines(args);
+                case "search_text" -> search(args, cancellation);
+                case "replace_in_file", "create_file", "append_file" -> edit(name, args, cancellation);
+                case "create_review_report" -> createReport(args, cancellation);
+                case "check_review_report" -> checkReport(args);
+                case "run_command" -> runCommand(args, cancellation);
+                case "git_read", "git_fetch_mr" -> gitReview().execute(name, args, cancellation);
+                default -> throw new IOException("Unknown tool: " + name);
+            };
+        }
+
         result = sensitive.redact(result);
         return result.length() > MAX_RESULT_CHARS ? result.substring(0, MAX_RESULT_CHARS) + "\n[output truncated]" : result;
     }
